@@ -40,7 +40,8 @@ contract ForkMigrationTest is Test {
                     website: "",
                     twitter: "",
                     feeBps: 100,
-                    totalSupply: 100_000 ether
+                    totalSupply: 100_000 ether,
+                    graduationThreshold: 4.2 ether
                 })
             )
         );

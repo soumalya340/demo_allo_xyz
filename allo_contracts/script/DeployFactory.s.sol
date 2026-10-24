@@ -15,7 +15,6 @@ import {MockWBNB} from "../test/mocks/MockWBNB.sol";
 /// Env (read from .env): PRIVATE_KEY (deployer). Optional: ADMIN (factory owner, defaults to the
 /// deployer), PANCAKE_FACTORY / WBNB to override the addresses below or deploy to another chain.
 contract DeployFactoryScript is Script {
-    uint256 constant GRADUATION_THRESHOLD = 4.2 ether;
     uint256 constant START_PRICE = 0.00001 ether;
 
     // PancakeSwap V2 factory + WBNB, checked on-chain (both factories expose INIT_CODE_PAIR_HASH)
@@ -26,12 +25,26 @@ contract DeployFactoryScript is Script {
 
     function run() public returns (PoolFactory factory) {
         uint256 deployerKey = _deployerKey();
-        address admin = vm.envOr("ADMIN", vm.addr(deployerKey));
+        address deployer = vm.addr(deployerKey);
+        address admin = vm.envOr("ADMIN", deployer);
 
+        uint256 balanceBefore = deployer.balance;
+
+        uint256 gasStart = gasleft();
         vm.startBroadcast(deployerKey);
         (address pancakeFactory, address wbnb) = _dex(admin);
-        factory = new PoolFactory(admin, pancakeFactory, wbnb, GRADUATION_THRESHOLD, START_PRICE);
+        factory = new PoolFactory(admin, pancakeFactory, wbnb, START_PRICE);
         vm.stopBroadcast();
+        uint256 gasUsed = gasStart - gasleft();
+
+        // forge runs this whole function locally before it broadcasts anything, so deployer.balance
+        // can't change here. The "after" is estimated from gas used; script/deploy.sh prints the real one.
+        uint256 estimatedCost = gasUsed * tx.gasprice;
+        console.log("deployer:                    ", deployer);
+        console.log("balance before (BNB):        ", _bnb(balanceBefore));
+        console.log("estimated gas:               ", gasUsed);
+        console.log("estimated cost (BNB):        ", _bnb(estimatedCost));
+        console.log("estimated balance after (BNB):", _bnb(balanceBefore - estimatedCost));
 
         console.log("chain id:           ", block.chainid);
         console.log("PoolFactory:        ", address(factory));
@@ -41,6 +54,13 @@ contract DeployFactoryScript is Script {
         console.log("WBNB:               ", wbnb);
         console.log("pair init code hash:");
         console.logBytes32(factory.pairInitCodeHash());
+    }
+
+    /// wei -> "0.100000000000000000"
+    function _bnb(uint256 wei_) internal pure returns (string memory frac) {
+        frac = vm.toString(wei_ % 1 ether);
+        while (bytes(frac).length < 18) frac = string.concat("0", frac);
+        return string.concat(vm.toString(wei_ / 1 ether), ".", frac);
     }
 
     /// PRIVATE_KEY with or without the 0x prefix.

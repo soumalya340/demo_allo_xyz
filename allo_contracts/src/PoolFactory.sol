@@ -13,7 +13,6 @@ contract PoolFactory is Ownable {
     address public immutable pancakeFactory; // PancakeSwap V2 factory pools migrate into
     address public immutable wbnb;
     bytes32 public immutable pairInitCodeHash; // read from pancakeFactory, used to predict pair addresses
-    uint256 public immutable graduationThreshold; // ETH a curve raises when it sells out
     uint256 public immutable startPrice; // launch price, wei per token
 
     address[] public allPools;
@@ -27,20 +26,20 @@ contract PoolFactory is Ownable {
         address admin,
         address pancakeFactory_,
         address wbnb_,
-        uint256 graduationThreshold_,
         uint256 startPrice_
     ) Ownable(admin) {
         implementation = address(new BondingCurvePool());
         pancakeFactory = pancakeFactory_;
         wbnb = wbnb_;
         pairInitCodeHash = IPancakeFactory(pancakeFactory_).INIT_CODE_PAIR_HASH();
-        graduationThreshold = graduationThreshold_;
         startPrice = startPrice_;
     }
 
+    /// @notice The creator picks the graduation threshold in `params`; the pool reverts if it's too
+    /// low for the supply (see BondingCurvePool.initialize).
     function createPool(PoolParams calldata params) external returns (address pool) {
         pool = Clones.clone(implementation);
-        BondingCurvePool(pool).initialize(params, msg.sender, graduationThreshold, startPrice);
+        BondingCurvePool(pool).initialize(params, msg.sender, startPrice);
         allPools.push(pool);
         emit PoolCreated(pool, msg.sender, params.name, params.symbol, params.totalSupply);
     }

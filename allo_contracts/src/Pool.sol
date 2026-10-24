@@ -15,6 +15,7 @@ struct PoolParams {
     string twitter;
     uint256 feeBps; // trading fee, e.g. 100 = 1%
     uint256 totalSupply; // 18 decimals
+    uint256 graduationThreshold; // ETH the curve raises when it sells out, e.g. 4.2 ether
 }
 
 interface IPoolFactory {
@@ -42,6 +43,7 @@ contract BondingCurvePool is ERC20Upgradeable, ReentrancyGuard {
     string public twitter;
     uint256 public feeBps;
 
+    uint256 public graduationThreshold; // ETH the curve raises when it sells out, set by the creator
     uint256 public startPrice; // price at launch
     uint256 public endPrice; // b: price once the curve is sold out
     uint256 public curveSupply; // tokens sold on the curve
@@ -77,19 +79,16 @@ contract BondingCurvePool is ERC20Upgradeable, ReentrancyGuard {
         _disableInitializers();
     }
 
-    /// @param threshold ETH the curve raises when it sells out (e.g. 4.2 ether)
     /// @param startPrice_ launch price in wei per token (e.g. 0.00001 ether)
-    function initialize(PoolParams calldata p, address creator_, uint256 threshold, uint256 startPrice_)
-        external
-        initializer
-    {
+    function initialize(PoolParams calldata p, address creator_, uint256 startPrice_) external initializer {
         if (p.feeBps > MAX_FEE_BPS) revert FeeTooHigh();
 
         uint256 curve = p.totalSupply * CURVE_SHARE_BPS / BPS;
         if (curve == 0) revert InvalidCurve();
-        uint256 b = LinearCurveMath.endPrice(threshold, startPrice_, curve);
-        // The price has to rise along the curve; otherwise the supply is too large for the threshold.
-        if (b <= startPrice_) revert InvalidCurve();
+        // The price has to rise along the curve, so the threshold must beat selling the whole curve at
+        // startPrice. Same as endPrice > startPrice, checked first so endPrice can't underflow.
+        if (p.graduationThreshold * LinearCurveMath.WAD <= startPrice_ * curve) revert InvalidCurve();
+        uint256 b = LinearCurveMath.endPrice(p.graduationThreshold, startPrice_, curve);
 
         __ERC20_init(p.name, p.symbol);
         factory = msg.sender;
@@ -99,6 +98,7 @@ contract BondingCurvePool is ERC20Upgradeable, ReentrancyGuard {
         twitter = p.twitter;
         feeBps = p.feeBps;
 
+        graduationThreshold = p.graduationThreshold;
         startPrice = startPrice_;
         endPrice = b;
         curveSupply = curve;

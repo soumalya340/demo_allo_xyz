@@ -37,7 +37,7 @@ contract BondingCurvePoolTest is Test {
     function setUp() public {
         pancake = IPancakeFactory(deployCode("PancakeFactory.sol:PancakeFactory", abi.encode(admin)));
         wbnb = new MockWBNB();
-        factory = new PoolFactory(admin, address(pancake), address(wbnb), THRESHOLD, START_PRICE);
+        factory = new PoolFactory(admin, address(pancake), address(wbnb), START_PRICE);
 
         vm.prank(creator);
         pool = BondingCurvePool(factory.createPool(_params(SUPPLY, FEE_BPS)));
@@ -47,6 +47,10 @@ contract BondingCurvePoolTest is Test {
     }
 
     function _params(uint256 supply, uint256 feeBps) internal pure returns (PoolParams memory) {
+        return _params(supply, feeBps, THRESHOLD);
+    }
+
+    function _params(uint256 supply, uint256 feeBps, uint256 threshold) internal pure returns (PoolParams memory) {
         return PoolParams({
             name: "Allo Coin",
             symbol: "ALLO",
@@ -54,7 +58,8 @@ contract BondingCurvePoolTest is Test {
             website: "https://example.com",
             twitter: "https://x.com/allo",
             feeBps: feeBps,
-            totalSupply: supply
+            totalSupply: supply,
+            graduationThreshold: threshold
         });
     }
 
@@ -102,6 +107,28 @@ contract BondingCurvePoolTest is Test {
         factory.createPool(_params(525_000 ether, FEE_BPS));
     }
 
+    function test_CreatorPicksThreshold() public {
+        // 8k tokens on the curve; b = 2 * 0.4 / 8,000 - 0.00001 = 0.00009 ETH
+        BondingCurvePool small = BondingCurvePool(factory.createPool(_params(10_000 ether, FEE_BPS, 0.4 ether)));
+        assertEq(small.graduationThreshold(), 0.4 ether);
+        assertEq(small.endPrice(), 0.00009 ether);
+
+        (, uint256 cost, uint256 fee) = small.getBuyQuote(8_000 ether);
+        vm.prank(alice);
+        small.buy{value: cost + fee}(8_000 ether);
+        assertTrue(small.graduated());
+        assertEq(small.ethReserve(), 0.4 ether);
+    }
+
+    function test_RevertWhen_ThresholdTooLowForSupply() public {
+        // 80k tokens at 0.00001 ETH already raise 0.8 ETH, so 0.8 ETH or less can't make the price rise
+        vm.expectRevert(BondingCurvePool.InvalidCurve.selector);
+        factory.createPool(_params(SUPPLY, FEE_BPS, 0.8 ether));
+
+        vm.expectRevert(BondingCurvePool.InvalidCurve.selector);
+        factory.createPool(_params(SUPPLY, FEE_BPS, 0));
+    }
+
     function test_RevertWhen_FeeTooHigh() public {
         vm.expectRevert(BondingCurvePool.FeeTooHigh.selector);
         factory.createPool(_params(SUPPLY, 1_001));
@@ -110,10 +137,10 @@ contract BondingCurvePoolTest is Test {
     function test_RevertWhen_InitializingImplementationOrCloneAgain() public {
         BondingCurvePool impl = BondingCurvePool(factory.implementation());
         vm.expectRevert(Initializable.InvalidInitialization.selector);
-        impl.initialize(_params(SUPPLY, FEE_BPS), alice, THRESHOLD, START_PRICE);
+        impl.initialize(_params(SUPPLY, FEE_BPS), alice, START_PRICE);
 
         vm.expectRevert(Initializable.InvalidInitialization.selector);
-        pool.initialize(_params(SUPPLY, FEE_BPS), alice, THRESHOLD, START_PRICE);
+        pool.initialize(_params(SUPPLY, FEE_BPS), alice, START_PRICE);
     }
 
     // ---------------------------------------------------------------- buying
