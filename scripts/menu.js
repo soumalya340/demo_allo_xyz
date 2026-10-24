@@ -21,13 +21,22 @@ if (!RPC_URL || !ADMIN_PRIVATE_KEY || !USER_PRIVATE_KEY) {
 }
 
 const web3 = new Web3(RPC_URL);
+// web3 gives up after 50 blocks (~40 s on BSC); busy testnet blocks can take longer than that.
+web3.transactionBlockTimeout = 400;
 const withPrefix = (k) => (k.startsWith('0x') ? k : `0x${k}`);
-web3.eth.accounts.wallet.add(withPrefix(ADMIN_PRIVATE_KEY));
-web3.eth.accounts.wallet.add(withPrefix(USER_PRIVATE_KEY));
-const wallets = {
-  admin: web3.eth.accounts.wallet[0].address,
-  user: web3.eth.accounts.wallet[1].address,
+// The wallet keeps one entry per address, so both keys may be the same wallet.
+const accounts = {
+  admin: web3.eth.accounts.privateKeyToAccount(withPrefix(ADMIN_PRIVATE_KEY)),
+  user: web3.eth.accounts.privateKeyToAccount(withPrefix(USER_PRIVATE_KEY)),
 };
+const wallets = {};
+for (const [role, account] of Object.entries(accounts)) {
+  if (!web3.eth.accounts.wallet.get(account.address)) web3.eth.accounts.wallet.add(account);
+  wallets[role] = account.address;
+}
+if (wallets.admin === wallets.user) {
+  console.log('! ADMIN_PRIVATE_KEY and USER_PRIVATE_KEY are the same wallet; both roles sign with it');
+}
 
 const rl = createInterface({ input: stdin, output: stdout });
 rl.on('close', () => process.exit(0));
@@ -119,10 +128,12 @@ async function collect(action, signer) {
 const explorer = { 56: 'https://bscscan.com/tx/', 97: 'https://testnet.bscscan.com/tx/' };
 
 async function sendTx(tx, label, chainId) {
-  const receipt = await web3.eth.sendTransaction(tx);
-  const link = explorer[chainId] ? `  ${explorer[chainId]}${receipt.transactionHash}` : '';
+  // Print the hash as soon as it is sent, so it can be checked in the explorer even if waiting fails.
+  const receipt = await web3.eth
+    .sendTransaction(tx)
+    .on('transactionHash', (hash) => console.log(`  … ${label} sent: ${hash}${explorer[chainId] ? `  ${explorer[chainId]}${hash}` : ''}`));
   const ok = receipt.status === 1n;
-  console.log(`  ${ok ? '✓' : '✗'} ${label}: ${receipt.transactionHash} (block ${receipt.blockNumber}, gas ${receipt.gasUsed})${link}`);
+  console.log(`  ${ok ? '✓' : '✗'} ${label} mined in block ${receipt.blockNumber} (gas ${receipt.gasUsed})`);
   if (!ok) throw new Error(`${label} reverted`);
   return receipt;
 }
