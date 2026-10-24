@@ -1,10 +1,10 @@
 # Backend API + indexer. Build from the repo root:
 #
 #   docker build -t allo-backend .
-#   docker run -p 3000:3000 -v allo-data:/app/data allo-backend
+#   docker run -p 3018:3018 -v allo-data:/app/data allo-backend
 #
 # Settings (all optional, defaults = BSC testnet, factory in Address.md), e.g.:
-#   docker run -p 3000:3000 -v allo-data:/app/data \
+#   docker run -p 3018:3018 -v allo-data:/app/data \
 #     -e RPC_URL=https://bsc-testnet-rpc.publicnode.com -e FACTORY_ADDRESS=0x... allo-backend
 # The full list is in backend/API.md.
 
@@ -22,7 +22,7 @@ RUN npm run build && npm prune --omit=dev
 FROM node:24-slim
 WORKDIR /app
 ENV NODE_ENV=production \
-    PORT=3000 \
+    PORT=3018 \
     DB_PATH=/app/data/allo.sqlite
 COPY --from=build /app/package.json ./
 COPY --from=build /app/node_modules ./node_modules
@@ -31,5 +31,5 @@ COPY --from=build /app/dist ./dist
 RUN mkdir -p /app/data && chown node:node /app/data
 VOLUME /app/data
 USER node
-EXPOSE 3000
+EXPOSE 3001
 CMD ["node", "dist/main.js"]
