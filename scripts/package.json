@@ -1,0 +1,11 @@
+{
+  "name": "allo-scripts",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node menu.js"
+  },
+  "dependencies": {
+    "web3": "^4.16.0"
+  }
+}
