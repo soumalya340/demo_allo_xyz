@@ -5,6 +5,12 @@ All endpoints are `GET`, with arguments in the query string. Every endpoint exce
 `transaction`. `from` (optional everywhere) is the sender; with it the call is dry-run and `gas` is filled in.
 Full details: `backend/API.md`.
 
+## Health
+
+| Endpoint | Returns |
+|---|---|
+| `/health` | `status` (`ok` / `down`), `uptimeSeconds`, `chainId`, `factory`, `rpc` (`headBlock` or `error`), `indexer` (`syncedBlock`, `lagBlocks`, `pools`). **200** when the RPC answers, **503** (same body) when it doesn't |
+
 ## PoolFactory
 
 | # | Endpoint | Contract function | Who sends it | Args (* = required) |

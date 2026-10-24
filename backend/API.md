@@ -64,6 +64,25 @@ Tables: `pools` (one row per launch: `address`, `idx`, `creator`, `quote_token`,
 `launch_block`, `launch_tx`, `launched_at`, the JSON `snapshot` and `updated_block`) and `meta`
 (sync progress).
 
+## Health
+
+`GET /health` reports whether the server can do its job:
+
+```jsonc
+{
+  "status": "ok",                 // "down" when the RPC doesn't answer
+  "uptimeSeconds": 3600,
+  "chainId": 97,
+  "factory": "0x…",
+  "rpc": { "ok": true, "headBlock": 138680000 },   // or { "ok": false, "error": "…" }
+  "indexer": { "enabled": true, "syncedBlock": 138679998, "lagBlocks": 2, "pools": 1 }
+}
+```
+
+It returns **200** while the RPC answers (within 3 s), and **503** with the same body when it doesn't,
+since every transaction endpoint and the indexer need it. `lagBlocks` is how far the SQLite data is
+behind the chain.
+
 ## Conventions
 
 - **Amounts are human decimals.** Coins (pool tokens) have 18 decimals. Quote amounts (prices,
