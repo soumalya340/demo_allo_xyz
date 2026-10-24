@@ -30,8 +30,9 @@ Full details: `backend/API.md`.
 | 14 | `/transfer-from` | `transferFrom(owner, to, amount)` | Approved spender | `pool`*, `owner`*, `to`*, `amount`*, `from` |
 | 15 | `/approve` | `approve(spender, amount)` | Any holder | `pool`*, `spender`*, `amount`* (`max` or `0` allowed), `from` |
 
-## Read-only
+## Read-only (served from SQLite, kept current by the backend's indexer)
 
 | # | Endpoint | Returns | Args |
 |---|---|---|---|
-| 16 | `/pool-info` | All pool state: metadata (links, description), quote token, taxes, tax allocation, supplies, progress, prices, reserve, fees, buckets, rewards, graduated/migrated, pair | `pool`*, `holder` (adds balance + pending rewards) |
+| 16 | `/pool-info` | Indexed pool record (404 if unknown): `index`, `launch` (block / tx / time), `updatedBlock`, `syncedBlock`, and all pool state: metadata (links, description), quote token, taxes, tax allocation, supplies, progress, prices, reserve, fees, buckets, rewards, graduated/migrated, pair | `pool`*, `holder` (adds balance + pending rewards, read live) |
+| 17 | `/get-all-pool-info` | The `/pool-info` record of every indexed pool, oldest first; plus `syncedBlock`, `total` (pools indexed), `offset`, `count` | `offset` (default 0), `limit` (default all), `holder` |

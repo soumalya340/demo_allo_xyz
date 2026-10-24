@@ -5,7 +5,7 @@ import { PoolService } from './pool.service.js';
 type Q = Record<string, unknown>;
 
 /// One GET endpoint per public, user-callable contract function (Functions.md, section 1), plus
-/// /pool-info. All arguments go in the query string. Each transaction endpoint returns
+/// /pool-info and /get-all-pool-info. All arguments go in the query string. Each transaction endpoint returns
 /// { chainId, approvals, transaction, simulated, quote }: the caller sends every `approvals`
 /// entry first, then `transaction`, with web3.js or their wallet.
 @Controller()
@@ -98,5 +98,10 @@ export class TransactionsController {
   @Get('pool-info')
   poolInfo(@Query() q: Q) {
     return this.pools.poolInfo(q);
+  }
+
+  @Get('get-all-pool-info')
+  allPoolInfo(@Query() q: Q) {
+    return this.pools.allPoolInfo(q);
   }
 }

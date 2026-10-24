@@ -80,6 +80,20 @@ export function allowanceAmount(name: string, v: unknown): bigint {
     : requireAmount(name, v, 18, { allowZero: true });
 }
 
+/// Non-negative integer, `fallback` when omitted.
+export function optionalInt(
+  name: string,
+  v: unknown,
+  fallback: number,
+): number {
+  if (isMissing(v)) return fallback;
+  const s = requireString(name, v);
+  if (!/^\d+$/.test(s)) {
+    throw new BadRequestException(`${name} must be a non-negative integer`);
+  }
+  return Number(s);
+}
+
 /// Basis points: integer in [0, max], `fallback` when omitted.
 export function bps(
   name: string,

@@ -1,4 +1,8 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import {
   ContractFunctionExecutionError,
   encodeFunctionData,
@@ -15,11 +19,14 @@ import {
   type QuoteToken,
   type TxResponse,
 } from '../chain/chain.service.js';
+import { PoolReader } from '../indexer/pool-reader.service.js';
+import { PoolStore } from '../store/pool-store.service.js';
 import {
   allowanceAmount,
   amount,
   bps,
   optionalAddress,
+  optionalInt,
   requireAddress,
   requireAmount,
 } from './params.js';
@@ -34,7 +41,11 @@ const DEFAULT_SLIPPAGE_BPS = 100; // 1%
 /// Quote amounts (what the coin trades against) use the quote token's decimals; coins have 18.
 @Injectable()
 export class PoolService {
-  constructor(private readonly chain: ChainService) {}
+  constructor(
+    private readonly chain: ChainService,
+    private readonly store: PoolStore,
+    private readonly reader: PoolReader,
+  ) {}
 
   // ---------------------------------------------------------------- trading
 
@@ -333,121 +344,60 @@ export class PoolService {
   }
 
   // ----------------------------------------------------------------- reads
+  //
+  // Served from SQLite, kept current by the indexer (a few seconds behind the chain). `syncedBlock`
+  // says how far it has got. Per-holder numbers aren't indexed, so `holder` is read live.
 
-  /// Read-only: everything about a pool, no transaction. With `holder`, also their balance and rewards.
+  /// Everything about a pool, no transaction. With `holder`, also their balance and rewards.
   async poolInfo(q: Query) {
     const address = requireAddress('pool', q.pool);
     const holder = optionalAddress('holder', q.holder);
-    const { pool, quote } = await this.assertPool(address);
-    const r = pool.read;
-    const [
-      [
-        name,
-        symbol,
-        totalSupply,
-        creator,
-        imageUrl,
-        website,
-        twitter,
-        description,
-      ],
-      [buyFeeBps, sellFeeBps, [creatorBps, burnBps, buybackBps, holdersBps]],
-      [graduationThreshold, startPrice, endPrice, currentPrice],
-      [curveSupply, dexSupply, curveTokensLeft, quoteReserve],
-      [creatorFees, burnBucket, buybackBucket, buybackHeld],
-      [rewardsUnclaimed, rewardsPending, graduated, migrated, pair],
-      holderInfo,
-    ] = await Promise.all([
-      Promise.all([
-        r.name(),
-        r.symbol(),
-        r.totalSupply(),
-        r.creator(),
-        r.imageUrl(),
-        r.website(),
-        r.twitter(),
-        r.description(),
-      ]),
-      Promise.all([r.buyFeeBps(), r.sellFeeBps(), r.taxAllocation()]),
-      Promise.all([
-        r.graduationThreshold(),
-        r.startPrice(),
-        r.endPrice(),
-        r.currentPrice(),
-      ]),
-      Promise.all([
-        r.curveSupply(),
-        r.dexSupply(),
-        r.curveTokensLeft(),
-        r.quoteReserve(),
-      ]),
-      Promise.all([
-        r.creatorFees(),
-        r.burnBucket(),
-        r.buybackBucket(),
-        r.buybackHeld(),
-      ]),
-      Promise.all([
-        r.rewardsUnclaimed(),
-        r.rewardsPending(),
-        r.graduated(),
-        r.migrated(),
-        r.pair(),
-      ]),
-      holder
-        ? Promise.all([r.balanceOf([holder]), r.pendingRewards([holder])])
-        : undefined,
-    ]);
-    const d = quote.decimals;
-    const sold = curveSupply - curveTokensLeft;
+    const pool = this.store.get(address);
+    if (!pool) {
+      throw new NotFoundException(
+        `${address} is not an indexed pool of factory ${this.chain.factoryAddress} ` +
+          '(not a pool, or launched in the last few seconds)',
+      );
+    }
+    return {
+      syncedBlock: this.store.syncedBlock() ?? null,
+      ...(await this.withHolder(pool, holder)),
+    };
+  }
+
+  /// Every pool the factory launched, oldest first. `offset` / `limit` page through them; by
+  /// default all are returned.
+  async allPoolInfo(q: Query) {
+    const holder = optionalAddress('holder', q.holder);
+    const total = this.store.poolCount();
+    const offset = optionalInt('offset', q.offset, 0);
+    const limit = optionalInt('limit', q.limit, total);
+    const pools = await Promise.all(
+      this.store.list(offset, limit).map((p) => this.withHolder(p, holder)),
+    );
     return {
       chainId: this.chain.chain.id,
-      pool: address,
       factory: this.chain.factoryAddress,
-      name,
-      symbol,
-      decimals: 18,
-      creator,
-      imageUrl,
-      website,
-      twitter,
-      description,
-      quoteToken: quote,
-      buyFeeBps: Number(buyFeeBps),
-      sellFeeBps: Number(sellFeeBps),
-      taxAllocation: {
-        creatorBps: Number(creatorBps),
-        burnBps: Number(burnBps),
-        buybackBps: Number(buybackBps),
-        holdersBps: Number(holdersBps),
-      },
-      totalSupply: amount(totalSupply),
-      curveSupply: amount(curveSupply),
-      dexSupply: amount(dexSupply),
-      curveTokensLeft: amount(curveTokensLeft),
-      curveTokensSold: amount(sold),
-      progressPercent: Number((sold * 10_000n) / curveSupply) / 100,
-      graduationThreshold: amount(graduationThreshold, d),
-      quoteReserve: amount(quoteReserve, d),
-      startPrice: amount(startPrice, d),
-      currentPrice: amount(currentPrice, d),
-      endPrice: amount(endPrice, d),
-      creatorFees: amount(creatorFees, d),
-      burnBucket: amount(burnBucket, d),
-      buybackBucket: amount(buybackBucket, d),
-      buybackHeld: amount(buybackHeld),
-      rewardsUnclaimed: amount(rewardsUnclaimed, d),
-      rewardsPending: amount(rewardsPending, d),
-      graduated,
-      migrated,
-      pair,
-      ...(holderInfo && {
-        holder: {
-          address: holder,
-          balance: amount(holderInfo[0]),
-          pendingRewards: amount(holderInfo[1], d),
-        },
-      }),
+      syncedBlock: this.store.syncedBlock() ?? null,
+      total,
+      offset,
+      count: pools.length,
+      pools,
+    };
+  }
+
+  private async withHolder(
+    pool: NonNullable<ReturnType<PoolStore['get']>>,
+    holder: Address | undefined,
+  ) {
+    if (!holder) return pool;
+    return {
+      ...pool,
+      holder: await this.reader.holder(
+        pool.pool,
+        holder,
+        pool.quoteToken.decimals,
+      ),
     };
   }
 

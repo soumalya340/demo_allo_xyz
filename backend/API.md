@@ -22,16 +22,51 @@ RPC_URL=... CHAIN_ID=97 FACTORY_ADDRESS=0x... npm run start:prod
 
 | Env               | Default                                            |
 | ----------------- | -------------------------------------------------- |
-| `RPC_URL`         | `https://data-seed-prebsc-1-s1.bnbchain.org:8545` |
+| `RPC_URL`         | `https://bsc-testnet-rpc.publicnode.com`           |
 | `CHAIN_ID`        | `97` (BSC testnet)                                 |
 | `FACTORY_ADDRESS` | `0x9F47e969D6012f37916F8Abc21E6E7c9b8d026BF`       |
 | `PORT`            | `3000`                                             |
+| `DB_PATH`         | `data/allo.sqlite` (relative to the working directory) |
+| `INDEXER_START_BLOCK` | current head on first run. Set it to the factory's deploy block to record every launch's block / tx |
+| `INDEXER_INTERVAL_MS` | `3000`: pause between passes once caught up      |
+| `INDEXER_LOG_RANGE`   | `5000`: most blocks per `eth_getLogs`            |
+| `INDEXER_USE_LOGS`    | `true`; `false` forces polling mode (see below)  |
+| `INDEXER`             | set to `off` to stop updating SQLite             |
 
 > The default `FACTORY_ADDRESS` is the **old** factory, deployed before quote tokens, launch fees and
 > tax allocation were added, so these endpoints won't work against it. Deploy the current contracts
 > and set `FACTORY_ADDRESS`.
 
 CORS is open, so browser frontends can call the API directly.
+
+## Indexer and SQLite
+
+`/pool-info` and `/get-all-pool-info` are served from SQLite (Node's built-in `node:sqlite`; no extra
+dependency). A background indexer, started with the server, keeps it in step with the chain. The
+transaction endpoints always read the chain live.
+
+Each pass of the indexer:
+
+1. **Finds new launches**: compares the factory's `poolCount()` with the database and saves each new
+   pool from `allPools(i)`. This needs nothing special from the RPC, so no launch is missed.
+2. **Follows changes**: reads `eth_getLogs` for the factory and every pool over the next block range.
+   A `PoolCreated` log records the launch block, tx hash and time. Any log from a pool (a trade,
+   claim, transfer or migration) means its state changed, so its snapshot is re-read from the chain.
+
+Reads are a few seconds behind the chain. Every read response has `syncedBlock`, the last block
+applied, and every pool has `updatedBlock`, the head when its snapshot was taken.
+
+**RPCs without logs.** BNB Chain's own `data-seed-*.bnbchain.org` nodes refuse `eth_getLogs`
+entirely. The indexer halves its range on each refusal. If even one block is refused, it switches to
+**polling mode**: it re-reads every pool on every pass, and `launch` stays `null`. It logs a warning
+when that happens. Use an RPC that serves logs (the default publicnode one does) to avoid it.
+
+The database belongs to one chain + factory. If `CHAIN_ID` or `FACTORY_ADDRESS` changes, the old rows
+are cleared and indexing starts again.
+
+Tables: `pools` (one row per launch: `address`, `idx`, `creator`, `quote_token`, `name`, `symbol`,
+`launch_block`, `launch_tx`, `launched_at`, the JSON `snapshot` and `updated_block`) and `meta`
+(sync progress).
 
 ## Conventions
 
@@ -196,10 +231,28 @@ reject that.
 
 ### `GET /pool-info?pool=&holder=`
 
-Read-only, so there is no `transaction`. It returns the metadata (links and `description`), quote token, buy/sell tax, tax
-allocation, supplies, curve progress, prices, `quoteReserve`, creator fees, burn/buyback buckets,
-`buybackHeld`, reward totals, `graduated` / `migrated` and `pair`. With `holder`, it also returns
-their coin balance and `pendingRewards`.
+Read-only, from SQLite, so there is no `transaction`. It returns the metadata (links and
+`description`), quote token, buy/sell tax, tax allocation, supplies, curve progress, prices,
+`quoteReserve`, creator fees, burn/buyback buckets, `buybackHeld`, reward totals, `graduated` /
+`migrated` and `pair`. It also returns `index` (position in the factory), `launch` (`{ block, txHash,
+timestamp }`, or `null` if not seen), `updatedBlock` and `syncedBlock`.
+
+With `holder`, it adds their coin balance and `pendingRewards`. These are read live from the chain,
+since per-holder numbers aren't indexed.
+
+It returns a **404** if the pool isn't in the database: either it's not a pool of this factory, or it
+launched in the last few seconds.
+
+### `GET /get-all-pool-info?offset=&limit=&holder=`
+
+Read-only, from SQLite. It returns the `/pool-info` record of every indexed pool, oldest first. All
+pools come back by default; `offset` and `limit` page through them, and `total` is the number
+indexed. `holder` works as it does on `/pool-info` (live).
+
+```jsonc
+{ "chainId": 97, "factory": "0x…", "syncedBlock": 1234567, "total": 42, "offset": 0, "count": 42,
+  "pools": [ { "index": 0, "pool": "0x…", …, "launch": { "block": 1230001, "txHash": "0x…", "timestamp": 1792841816 }, "updatedBlock": 1234560 } ] }
+```
 
 ## ABIs
 

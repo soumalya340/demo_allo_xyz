@@ -21,7 +21,8 @@ import { bondingCurvePoolAbi, poolFactoryAbi } from './abis.js';
 
 /// Factory deployed on BSC testnet (see Address.md).
 const DEFAULT_FACTORY = '0x9F47e969D6012f37916F8Abc21E6E7c9b8d026BF';
-const DEFAULT_RPC = 'https://data-seed-prebsc-1-s1.bnbchain.org:8545';
+// publicnode serves eth_getLogs, which the indexer uses; BNB Chain's own dataseed nodes refuse it.
+const DEFAULT_RPC = 'https://bsc-testnet-rpc.publicnode.com';
 
 /// What the caller hands to web3.js / the wallet. Quantities are hex so it can also go
 /// straight into an EIP-1193 `eth_sendTransaction` (MetaMask etc.) without conversion.
