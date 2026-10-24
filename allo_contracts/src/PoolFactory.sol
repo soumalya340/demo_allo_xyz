@@ -4,12 +4,15 @@ pragma solidity ^0.8.20;
 import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {BondingCurvePool, PoolParams} from "./Pool.sol";
+import {IPancakeFactory} from "./interfaces/IPancake.sol";
 
 /// @notice Launches coins. Each pool is an ERC-1167 minimal proxy pointing at one BondingCurvePool implementation.
 /// The owner is the admin: it collects 20% of every trading fee from every pool.
 contract PoolFactory is Ownable {
     address public immutable implementation;
-    address public immutable dexRouter;
+    address public immutable pancakeFactory; // PancakeSwap V2 factory pools migrate into
+    address public immutable wbnb;
+    bytes32 public immutable pairInitCodeHash; // read from pancakeFactory, used to predict pair addresses
     uint256 public immutable graduationThreshold; // ETH a curve raises when it sells out
     uint256 public immutable startPrice; // launch price, wei per token
 
@@ -20,16 +23,24 @@ contract PoolFactory is Ownable {
 
     error TransferFailed();
 
-    constructor(address admin, address dexRouter_, uint256 graduationThreshold_, uint256 startPrice_) Ownable(admin) {
+    constructor(
+        address admin,
+        address pancakeFactory_,
+        address wbnb_,
+        uint256 graduationThreshold_,
+        uint256 startPrice_
+    ) Ownable(admin) {
         implementation = address(new BondingCurvePool());
-        dexRouter = dexRouter_;
+        pancakeFactory = pancakeFactory_;
+        wbnb = wbnb_;
+        pairInitCodeHash = IPancakeFactory(pancakeFactory_).INIT_CODE_PAIR_HASH();
         graduationThreshold = graduationThreshold_;
         startPrice = startPrice_;
     }
 
     function createPool(PoolParams calldata params) external returns (address pool) {
         pool = Clones.clone(implementation);
-        BondingCurvePool(payable(pool)).initialize(params, msg.sender, graduationThreshold, startPrice);
+        BondingCurvePool(pool).initialize(params, msg.sender, graduationThreshold, startPrice);
         allPools.push(pool);
         emit PoolCreated(pool, msg.sender, params.name, params.symbol, params.totalSupply);
     }

@@ -6,7 +6,17 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {PoolFactory} from "../src/PoolFactory.sol";
 import {BondingCurvePool, PoolParams} from "../src/Pool.sol";
-import {MockRouter} from "./mocks/MockRouter.sol";
+import {IPancakeFactory} from "../src/interfaces/IPancake.sol";
+import {MockWBNB} from "./mocks/MockWBNB.sol";
+
+/// Pair functions the tests read; the pair itself is the real PancakePair from deps/.
+interface ITestPair {
+    function token0() external view returns (address);
+    function getReserves() external view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast);
+    function balanceOf(address) external view returns (uint256);
+    function totalSupply() external view returns (uint256);
+    function sync() external;
+}
 
 contract BondingCurvePoolTest is Test {
     uint256 constant THRESHOLD = 4.2 ether;
@@ -15,7 +25,8 @@ contract BondingCurvePoolTest is Test {
     uint256 constant FEE_BPS = 100; // 1%
 
     PoolFactory factory;
-    MockRouter router;
+    IPancakeFactory pancake;
+    MockWBNB wbnb;
     BondingCurvePool pool;
 
     address admin = makeAddr("admin");
@@ -24,11 +35,12 @@ contract BondingCurvePoolTest is Test {
     address bob = makeAddr("bob");
 
     function setUp() public {
-        router = new MockRouter();
-        factory = new PoolFactory(admin, address(router), THRESHOLD, START_PRICE);
+        pancake = IPancakeFactory(deployCode("PancakeFactory.sol:PancakeFactory", abi.encode(admin)));
+        wbnb = new MockWBNB();
+        factory = new PoolFactory(admin, address(pancake), address(wbnb), THRESHOLD, START_PRICE);
 
         vm.prank(creator);
-        pool = BondingCurvePool(payable(factory.createPool(_params(SUPPLY, FEE_BPS))));
+        pool = BondingCurvePool(factory.createPool(_params(SUPPLY, FEE_BPS)));
 
         vm.deal(alice, 100 ether);
         vm.deal(bob, 100 ether);
@@ -96,7 +108,7 @@ contract BondingCurvePoolTest is Test {
     }
 
     function test_RevertWhen_InitializingImplementationOrCloneAgain() public {
-        BondingCurvePool impl = BondingCurvePool(payable(factory.implementation()));
+        BondingCurvePool impl = BondingCurvePool(factory.implementation());
         vm.expectRevert(Initializable.InvalidInitialization.selector);
         impl.initialize(_params(SUPPLY, FEE_BPS), alice, THRESHOLD, START_PRICE);
 
@@ -191,7 +203,7 @@ contract BondingCurvePoolTest is Test {
         assertEq(fee, cost * FEE_BPS / 10_000);
     }
 
-    function test_BuyWithEth_MatchesExactTokenBuy() public {
+    function test_BuyWithEth_MatchesExactTokenBuy() public view {
         // 0.153125 ETH + 1% fee buys exactly 10k tokens from the start (see test_Buy_ChargesAreaUnderCurvePlusFee)
         (uint256 filled,,) = pool.getBuyQuoteForEth(0.15465625 ether);
         assertApproxEqRel(filled, 10_000 ether, 1e9); // within 1e-9 %
@@ -308,21 +320,107 @@ contract BondingCurvePoolTest is Test {
         pool.migrate();
     }
 
-    function test_Migrate_SendsDexShareAndRaisedEthToRouter() public {
+    /// Reserves of the pair as (pool token, WBNB).
+    function _reserves() internal view returns (uint256 tokenReserve, uint256 wbnbReserve) {
+        ITestPair p = ITestPair(pool.pair());
+        (uint112 r0, uint112 r1,) = p.getReserves();
+        (tokenReserve, wbnbReserve) = p.token0() == address(pool) ? (r0, r1) : (r1, r0);
+    }
+
+    function test_PairAddressIsPredictedBeforeCreation() public {
+        assertEq(pancake.getPair(address(pool), address(wbnb)), address(0));
+        address created = pancake.createPair(address(pool), address(wbnb));
+        assertEq(created, pool.pair());
+    }
+
+    function test_Migrate_SeedsPancakePairAndBurnsLp() public {
         _buy(alice, 80_000 ether);
         pool.migrate();
 
-        assertEq(router.lastToken(), address(pool));
-        assertEq(router.lastTokenAmount(), 20_000 ether);
-        assertEq(router.lastEthAmount(), THRESHOLD);
-        assertEq(router.lastTo(), pool.DEAD());
-        assertEq(pool.balanceOf(address(router)), 20_000 ether);
+        address pair = pancake.getPair(address(pool), address(wbnb));
+        assertEq(pair, pool.pair());
+        (uint256 tokenReserve, uint256 wbnbReserve) = _reserves();
+        assertEq(tokenReserve, 20_000 ether);
+        assertEq(wbnbReserve, THRESHOLD);
+
+        // all LP except Pancake's MINIMUM_LIQUIDITY (locked at address(0)) is burned to DEAD
+        ITestPair p = ITestPair(pair);
+        assertEq(p.balanceOf(pool.DEAD()), p.totalSupply() - 1000);
+        assertEq(p.balanceOf(address(0)), 1000);
+
         assertEq(pool.ethReserve(), 0);
+        assertEq(pool.balanceOf(address(pool)), 0);
         // only the unclaimed creator fees remain
         assertEq(address(pool).balance, pool.creatorFees());
 
         vm.expectRevert(BondingCurvePool.AlreadyMigrated.selector);
         pool.migrate();
+    }
+
+    function test_RevertWhen_SendingTokenToPairBeforeMigration() public {
+        _buy(alice, 1_000 ether);
+        address pair = pool.pair();
+
+        vm.startPrank(alice);
+        vm.expectRevert(BondingCurvePool.TransferToPairBeforeMigration.selector);
+        pool.transfer(pair, 1 ether);
+
+        // transferFrom goes through the same check
+        pool.approve(bob, 1 ether);
+        vm.stopPrank();
+        vm.prank(bob);
+        vm.expectRevert(BondingCurvePool.TransferToPairBeforeMigration.selector);
+        pool.transferFrom(alice, pair, 1 ether);
+    }
+
+    function test_TransfersToPairAllowedAfterMigration() public {
+        _buy(alice, 80_000 ether);
+        pool.migrate();
+
+        address pair = pool.pair();
+        vm.prank(alice);
+        pool.transfer(pair, 1 ether);
+        assertEq(pool.balanceOf(pair), 20_000 ether + 1 ether);
+    }
+
+    /// The attack that bricked the router version: pre-create the pair, donate dust WBNB, sync.
+    /// Reserves become (0, 1 wei), which made the router's quote() revert forever.
+    function test_Migrate_SurvivesPreCreatedPairWithSyncedDonation() public {
+        address attacker = makeAddr("attacker");
+        vm.deal(attacker, 1 ether);
+        vm.startPrank(attacker);
+        address pair = pancake.createPair(address(pool), address(wbnb));
+        wbnb.deposit{value: 1 ether}();
+        wbnb.transfer(pair, 1);
+        ITestPair(pair).sync();
+        vm.stopPrank();
+
+        _buy(alice, 80_000 ether);
+        pool.migrate();
+
+        // the donation just becomes extra liquidity; the attacker holds no LP
+        (uint256 tokenReserve, uint256 wbnbReserve) = _reserves();
+        assertEq(tokenReserve, 20_000 ether);
+        assertEq(wbnbReserve, THRESHOLD + 1);
+        assertEq(ITestPair(pair).balanceOf(attacker), 0);
+    }
+
+    /// Same, but with a large unsynced donation: still credited to the pool, not to the attacker.
+    function test_Migrate_SurvivesUnsyncedDonation() public {
+        address attacker = makeAddr("attacker");
+        vm.deal(attacker, 10 ether);
+        vm.startPrank(attacker);
+        wbnb.deposit{value: 10 ether}();
+        wbnb.transfer(pool.pair(), 10 ether); // pair doesn't even exist yet
+        vm.stopPrank();
+
+        _buy(alice, 80_000 ether);
+        pool.migrate();
+
+        (uint256 tokenReserve, uint256 wbnbReserve) = _reserves();
+        assertEq(tokenReserve, 20_000 ether);
+        assertEq(wbnbReserve, THRESHOLD + 10 ether);
+        assertEq(ITestPair(pool.pair()).balanceOf(attacker), 0);
     }
 
     // ------------------------------------------------------------------ fees

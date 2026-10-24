@@ -4,7 +4,7 @@ pragma solidity ^0.8.20;
 import {ERC20Upgradeable} from "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {LinearCurveMath} from "./LinearCurveMath.sol";
-import {IPancakeRouter02} from "./interfaces/IPancakeRouter02.sol";
+import {IPancakeFactory, IPancakePair, IWBNB} from "./interfaces/IPancake.sol";
 
 /// @notice What a creator fills in to launch a coin.
 struct PoolParams {
@@ -18,13 +18,15 @@ struct PoolParams {
 }
 
 interface IPoolFactory {
-    function dexRouter() external view returns (address);
+    function pancakeFactory() external view returns (address);
+    function wbnb() external view returns (address);
+    function pairInitCodeHash() external view returns (bytes32);
 }
 
 /// @notice A coin plus its bonding curve. Deployed as an ERC-1167 clone by PoolFactory.
 ///
 /// 80% of the supply is sold on the curve y = -m*x + b; the other 20% is held back and,
-/// once the curve sells out, paired with the raised ETH on PancakeSwap V2.
+/// once the curve sells out, paired with the raised ETH in a PancakeSwap V2 TOKEN/WBNB pair.
 /// Every trade pays `feeBps` in ETH: 20% of it goes to the admin (via the factory), 80% to the creator.
 contract BondingCurvePool is ERC20Upgradeable, ReentrancyGuard {
     uint256 public constant BPS = 10_000;
@@ -50,11 +52,12 @@ contract BondingCurvePool is ERC20Upgradeable, ReentrancyGuard {
     uint256 public creatorFees; // unclaimed creator share of fees
     bool public graduated; // curve sold out, trading closed
     bool public migrated; // liquidity sent to the DEX
+    address public pair; // TOKEN/WBNB PancakeSwap pair, known before it is created
 
     event Bought(address indexed buyer, uint256 amount, uint256 cost, uint256 fee);
     event Sold(address indexed seller, uint256 amount, uint256 refund, uint256 fee);
     event Graduated(uint256 ethRaised);
-    event Migrated(address indexed router, uint256 tokenAmount, uint256 ethAmount, uint256 liquidity);
+    event Migrated(address indexed pair, uint256 tokenAmount, uint256 ethAmount, uint256 liquidity);
     event CreatorFeesClaimed(address indexed creator, uint256 amount);
 
     error ZeroAmount();
@@ -67,6 +70,8 @@ contract BondingCurvePool is ERC20Upgradeable, ReentrancyGuard {
     error SlippageExceeded(uint256 ethOut, uint256 minEthOut);
     error AveragePriceTooHigh(uint256 filled, uint256 paid);
     error TransferFailed();
+    error TransferToPairBeforeMigration();
+    error PairMismatch(address expected, address actual);
 
     constructor() {
         _disableInitializers();
@@ -99,8 +104,22 @@ contract BondingCurvePool is ERC20Upgradeable, ReentrancyGuard {
         curveSupply = curve;
         dexSupply = p.totalSupply - curve;
         curveTokensLeft = curve;
+        pair = _predictPair();
 
         _mint(address(this), p.totalSupply);
+    }
+
+    /// PancakeFactory deploys pairs with CREATE2 (salt = sorted token addresses), so the address
+    /// is fixed before anyone calls createPair.
+    function _predictPair() private view returns (address) {
+        IPoolFactory f = IPoolFactory(factory);
+        address wbnb = f.wbnb();
+        (address token0, address token1) = address(this) < wbnb ? (address(this), wbnb) : (wbnb, address(this));
+        bytes32 salt = keccak256(abi.encodePacked(token0, token1));
+        return
+            address(
+                uint160(uint256(keccak256(abi.encodePacked(hex"ff", f.pancakeFactory(), salt, f.pairInitCodeHash()))))
+            );
     }
 
     // ---------------------------------------------------------------- views
@@ -195,23 +214,43 @@ contract BondingCurvePool is ERC20Upgradeable, ReentrancyGuard {
     // ------------------------------------------------------------- migration
 
     /// @notice After the curve sells out, anyone can push the 20% DEX allocation plus all raised ETH
-    /// into a PancakeSwap V2 pool. The LP tokens are burned, so the liquidity is locked forever.
+    /// into the PancakeSwap V2 TOKEN/WBNB pair. The LP tokens are burned, so the liquidity is locked forever.
+    ///
+    /// This talks to Pancake core directly instead of the router. The router prices a deposit off the
+    /// pair's existing reserves, so anyone who pre-created the pair and `sync`ed a dust donation into
+    /// it could either brick migration or set the launch price. Here:
+    ///   - nobody can send this token to the pair before migration (see `_update`), so it can't hold
+    ///     any, and no LP can be minted ahead of us;
+    ///   - `mint` credits everything above the old reserves as our deposit, so any WBNB someone donated
+    ///     just ends up as extra liquidity in the pool.
     function migrate() external nonReentrant {
         if (!graduated) revert NotGraduated();
         if (migrated) revert AlreadyMigrated();
         migrated = true;
 
-        address router = IPoolFactory(factory).dexRouter();
+        IPoolFactory f = IPoolFactory(factory);
+        IPancakeFactory pancake = IPancakeFactory(f.pancakeFactory());
+        address wbnb = f.wbnb();
+
+        address actual = pancake.getPair(address(this), wbnb);
+        if (actual == address(0)) actual = pancake.createPair(address(this), wbnb);
+        if (actual != pair) revert PairMismatch(pair, actual);
+
         uint256 ethAmount = ethReserve;
         ethReserve = 0;
+        IWBNB(wbnb).deposit{value: ethAmount}();
+        if (!IWBNB(wbnb).transfer(pair, ethAmount)) revert TransferFailed();
+        _transfer(address(this), pair, dexSupply);
+        uint256 liquidity = IPancakePair(pair).mint(DEAD);
 
-        _approve(address(this), router, dexSupply);
-        (uint256 tokenAmount, uint256 ethUsed, uint256 liquidity) = IPancakeRouter02(router)
-        .addLiquidityETH{value: ethAmount}(
-            address(this), dexSupply, 0, 0, DEAD, block.timestamp
-        );
+        emit Migrated(pair, dexSupply, ethAmount, liquidity);
+    }
 
-        emit Migrated(router, tokenAmount, ethUsed, liquidity);
+    /// Blocks sending this token to the Pancake pair until migration, so the pair's price can't be
+    /// seeded by anyone else.
+    function _update(address from, address to, uint256 value) internal override {
+        if (to == pair && !migrated) revert TransferToPairBeforeMigration();
+        super._update(from, to, value);
     }
 
     // ------------------------------------------------------------------ fees
@@ -236,7 +275,4 @@ contract BondingCurvePool is ERC20Upgradeable, ReentrancyGuard {
         (bool ok,) = to.call{value: value}("");
         if (!ok) revert TransferFailed();
     }
-
-    /// Accepts leftover ETH a router may refund during migration.
-    receive() external payable {}
 }
