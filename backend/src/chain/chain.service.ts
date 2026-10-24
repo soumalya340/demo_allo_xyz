@@ -19,8 +19,9 @@ import {
 import { bsc, bscTestnet } from 'viem/chains';
 import { bondingCurvePoolAbi, poolFactoryAbi } from './abis.js';
 
-/// Factory deployed on BSC testnet (see Address.md).
-const DEFAULT_FACTORY = '0x9F47e969D6012f37916F8Abc21E6E7c9b8d026BF';
+/// Factory deployed on BSC testnet (see Address.md), and the block it was deployed in.
+const DEFAULT_FACTORY = '0xc44f16547b4c5fb6818281F9312bf63C959B6D18';
+const DEFAULT_FACTORY_BLOCK = 138_672_089;
 // publicnode serves eth_getLogs, which the indexer uses; BNB Chain's own dataseed nodes refuse it.
 const DEFAULT_RPC = 'https://bsc-testnet-rpc.publicnode.com';
 
@@ -67,6 +68,9 @@ export class ChainService {
   readonly chain: Chain;
   readonly client: Client;
   readonly factoryAddress: Address;
+  /// Where the indexer starts on its first run, if known: INDEXER_START_BLOCK, else the default
+  /// factory's deploy block.
+  readonly startBlock?: number;
 
   constructor() {
     const chainId = Number(process.env.CHAIN_ID ?? bscTestnet.id);
@@ -85,6 +89,12 @@ export class ChainService {
     });
     this.factoryAddress = (process.env.FACTORY_ADDRESS ??
       DEFAULT_FACTORY) as Address;
+    this.startBlock = process.env.INDEXER_START_BLOCK
+      ? Number(process.env.INDEXER_START_BLOCK)
+      : isAddressEqual(this.factoryAddress, DEFAULT_FACTORY) &&
+          chainId === bscTestnet.id
+        ? DEFAULT_FACTORY_BLOCK
+        : undefined;
   }
 
   factory(): FactoryContract {

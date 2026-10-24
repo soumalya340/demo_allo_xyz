@@ -24,18 +24,14 @@ RPC_URL=... CHAIN_ID=97 FACTORY_ADDRESS=0x... npm run start:prod
 | ----------------- | -------------------------------------------------- |
 | `RPC_URL`         | `https://bsc-testnet-rpc.publicnode.com`           |
 | `CHAIN_ID`        | `97` (BSC testnet)                                 |
-| `FACTORY_ADDRESS` | `0x9F47e969D6012f37916F8Abc21E6E7c9b8d026BF`       |
+| `FACTORY_ADDRESS` | `0xc44f16547b4c5fb6818281F9312bf63C959B6D18` (see `Address.md`) |
 | `PORT`            | `3000`                                             |
 | `DB_PATH`         | `data/allo.sqlite` (relative to the working directory) |
-| `INDEXER_START_BLOCK` | current head on first run. Set it to the factory's deploy block to record every launch's block / tx |
+| `INDEXER_START_BLOCK` | the default factory's deploy block (`138672089`); for any other factory, the current head on first run. Set it to your factory's deploy block to record every launch's block / tx |
 | `INDEXER_INTERVAL_MS` | `3000`: pause between passes once caught up      |
 | `INDEXER_LOG_RANGE`   | `5000`: most blocks per `eth_getLogs`            |
 | `INDEXER_USE_LOGS`    | `true`; `false` forces polling mode (see below)  |
 | `INDEXER`             | set to `off` to stop updating SQLite             |
-
-> The default `FACTORY_ADDRESS` is the **old** factory, deployed before quote tokens, launch fees and
-> tax allocation were added, so these endpoints won't work against it. Deploy the current contracts
-> and set `FACTORY_ADDRESS`.
 
 CORS is open, so browser frontends can call the API directly.
 

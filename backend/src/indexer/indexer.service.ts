@@ -82,11 +82,10 @@ export class IndexerService
     const head = Number(await this.chain.client.getBlockNumber());
     await this.addNewPools(head);
 
-    // First run: start from INDEXER_START_BLOCK (set it to the factory's deploy block to get
-    // every launch's block / tx), otherwise from the current head.
+    // First run: start from the factory's deploy block if known (so every launch's block / tx is
+    // recorded), otherwise from the current head.
     const synced =
-      this.store.syncedBlock() ??
-      Number(process.env.INDEXER_START_BLOCK ?? head + 1) - 1;
+      this.store.syncedBlock() ?? (this.chain.startBlock ?? head + 1) - 1;
     if (synced >= head) return true;
 
     if (!this.useLogs) {
