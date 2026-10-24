@@ -6,4 +6,4 @@
 4. /pool-info 
 5. /claim-creator-fees
 6. /claim-admin-fees
-7. /migrate 
+7. /migrate it

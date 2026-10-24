@@ -5,7 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {PoolFactory} from "../src/PoolFactory.sol";
-import {BondingCurvePool, PoolParams} from "../src/Pool.sol";
+import {BondingCurvePool, PoolParams, TaxAllocation} from "../src/Pool.sol";
 import {IPancakeFactory} from "../src/interfaces/IPancake.sol";
 import {MockWBNB} from "./mocks/MockWBNB.sol";
 
@@ -37,10 +37,10 @@ contract BondingCurvePoolTest is Test {
     function setUp() public {
         pancake = IPancakeFactory(deployCode("PancakeFactory.sol:PancakeFactory", abi.encode(admin)));
         wbnb = new MockWBNB();
-        factory = new PoolFactory(admin, address(pancake), address(wbnb), START_PRICE);
+        factory = new PoolFactory(admin, address(pancake), address(wbnb), START_PRICE, 0);
 
         vm.prank(creator);
-        pool = BondingCurvePool(factory.createPool(_params(SUPPLY, FEE_BPS)));
+        pool = BondingCurvePool(factory.createPool(_params(SUPPLY, FEE_BPS), 0));
 
         vm.deal(alice, 100 ether);
         vm.deal(bob, 100 ether);
@@ -57,7 +57,10 @@ contract BondingCurvePoolTest is Test {
             imageUrl: "https://example.com/allo.png",
             website: "https://example.com",
             twitter: "https://x.com/allo",
-            feeBps: feeBps,
+            quoteToken: address(0),
+            buyFeeBps: feeBps,
+            sellFeeBps: feeBps,
+            taxAllocation: TaxAllocation({creatorBps: 10_000, burnBps: 0, buybackBps: 0, holdersBps: 0}),
             totalSupply: supply,
             graduationThreshold: threshold
         });
@@ -67,7 +70,7 @@ contract BondingCurvePoolTest is Test {
         (, uint256 cost, uint256 fee) = pool.getBuyQuote(amount);
         paid = cost + fee;
         vm.prank(who);
-        pool.buy{value: paid}(amount);
+        pool.buy{value: paid}(amount, paid);
     }
 
     // -------------------------------------------------------------- creation
@@ -78,7 +81,9 @@ contract BondingCurvePoolTest is Test {
         assertEq(pool.imageUrl(), "https://example.com/allo.png");
         assertEq(pool.website(), "https://example.com");
         assertEq(pool.twitter(), "https://x.com/allo");
-        assertEq(pool.feeBps(), FEE_BPS);
+        assertEq(pool.quoteToken(), address(0));
+        assertEq(pool.buyFeeBps(), FEE_BPS);
+        assertEq(pool.sellFeeBps(), FEE_BPS);
         assertEq(pool.creator(), creator);
         assertEq(pool.factory(), address(factory));
 
@@ -104,34 +109,34 @@ contract BondingCurvePoolTest is Test {
     function test_RevertWhen_SupplyTooLargeForThreshold() public {
         // 80% of 525k = 420k tokens; at 0.00001 ETH that alone is 4.2 ETH, so the price couldn't rise
         vm.expectRevert(BondingCurvePool.InvalidCurve.selector);
-        factory.createPool(_params(525_000 ether, FEE_BPS));
+        factory.createPool(_params(525_000 ether, FEE_BPS), 0);
     }
 
     function test_CreatorPicksThreshold() public {
         // 8k tokens on the curve; b = 2 * 0.4 / 8,000 - 0.00001 = 0.00009 ETH
-        BondingCurvePool small = BondingCurvePool(factory.createPool(_params(10_000 ether, FEE_BPS, 0.4 ether)));
+        BondingCurvePool small = BondingCurvePool(factory.createPool(_params(10_000 ether, FEE_BPS, 0.4 ether), 0));
         assertEq(small.graduationThreshold(), 0.4 ether);
         assertEq(small.endPrice(), 0.00009 ether);
 
         (, uint256 cost, uint256 fee) = small.getBuyQuote(8_000 ether);
         vm.prank(alice);
-        small.buy{value: cost + fee}(8_000 ether);
+        small.buy{value: cost + fee}(8_000 ether, cost + fee);
         assertTrue(small.graduated());
-        assertEq(small.ethReserve(), 0.4 ether);
+        assertEq(small.quoteReserve(), 0.4 ether);
     }
 
     function test_RevertWhen_ThresholdTooLowForSupply() public {
         // 80k tokens at 0.00001 ETH already raise 0.8 ETH, so 0.8 ETH or less can't make the price rise
         vm.expectRevert(BondingCurvePool.InvalidCurve.selector);
-        factory.createPool(_params(SUPPLY, FEE_BPS, 0.8 ether));
+        factory.createPool(_params(SUPPLY, FEE_BPS, 0.8 ether), 0);
 
         vm.expectRevert(BondingCurvePool.InvalidCurve.selector);
-        factory.createPool(_params(SUPPLY, FEE_BPS, 0));
+        factory.createPool(_params(SUPPLY, FEE_BPS, 0), 0);
     }
 
     function test_RevertWhen_FeeTooHigh() public {
         vm.expectRevert(BondingCurvePool.FeeTooHigh.selector);
-        factory.createPool(_params(SUPPLY, 1_001));
+        factory.createPool(_params(SUPPLY, 1_001), 0);
     }
 
     function test_RevertWhen_InitializingImplementationOrCloneAgain() public {
@@ -156,7 +161,7 @@ contract BondingCurvePoolTest is Test {
 
         assertEq(pool.balanceOf(alice), 10_000 ether);
         assertEq(pool.curveTokensLeft(), 70_000 ether);
-        assertEq(pool.ethReserve(), cost);
+        assertEq(pool.quoteReserve(), cost);
         assertEq(pool.currentPrice(), 0.000020625 ether);
     }
 
@@ -165,13 +170,13 @@ contract BondingCurvePoolTest is Test {
         // fee 0.00153125 ETH -> 20% admin, 80% creator
         assertEq(address(factory).balance, 0.00030625 ether);
         assertEq(pool.creatorFees(), 0.001225 ether);
-        assertEq(address(pool).balance, pool.ethReserve() + pool.creatorFees());
+        assertEq(address(pool).balance, pool.quoteReserve() + pool.creatorFees());
     }
 
     function test_Buy_RefundsExcessEth() public {
         (, uint256 cost, uint256 fee) = pool.getBuyQuote(10_000 ether);
         vm.prank(alice);
-        pool.buy{value: 10 ether}(10_000 ether);
+        pool.buy{value: 10 ether}(10_000 ether, 10 ether);
         assertEq(alice.balance, 100 ether - cost - fee);
     }
 
@@ -179,7 +184,7 @@ contract BondingCurvePoolTest is Test {
         (, uint256 cost, uint256 fee) = pool.getBuyQuote(10_000 ether);
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(BondingCurvePool.InsufficientPayment.selector, cost + fee, cost));
-        pool.buy{value: cost}(10_000 ether);
+        pool.buy{value: cost}(10_000 ether, cost);
     }
 
     function test_Buy_PartialFillAtEndOfCurve() public {
@@ -188,7 +193,7 @@ contract BondingCurvePoolTest is Test {
         // bob asks for 50k but only 30k are left
         (, uint256 cost, uint256 fee) = pool.getBuyQuote(30_000 ether);
         vm.prank(bob);
-        pool.buy{value: 10 ether}(50_000 ether);
+        pool.buy{value: 10 ether}(50_000 ether, 10 ether);
 
         assertEq(pool.balanceOf(bob), 30_000 ether);
         assertEq(bob.balance, 100 ether - cost - fee);
@@ -211,16 +216,16 @@ contract BondingCurvePoolTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(BondingCurvePool.AveragePriceTooHigh.selector, 10_000 ether, leftCost + leftFee)
         );
-        pool.buy{value: maxSpend}(50_000 ether);
+        pool.buy{value: maxSpend}(50_000 ether, maxSpend);
     }
 
-    // ------------------------------------------------------------ buy with ETH
+    // --------------------------------------------------------- buy exact in
 
-    function test_BuyWithEth_SpendsTheWholeBudget() public {
-        (uint256 filled, uint256 cost, uint256 fee) = pool.getBuyQuoteForEth(0.1 ether);
+    function test_BuyExactIn_SpendsTheWholeBudget() public {
+        (uint256 filled, uint256 cost, uint256 fee) = pool.getBuyQuoteExactIn(0.1 ether);
 
         vm.prank(alice);
-        pool.buyWithEth{value: 0.1 ether}(filled);
+        pool.buyExactIn{value: 0.1 ether}(0.1 ether, filled);
 
         assertEq(pool.balanceOf(alice), filled);
         assertEq(alice.balance, 100 ether - cost - fee);
@@ -230,58 +235,58 @@ contract BondingCurvePoolTest is Test {
         assertEq(fee, cost * FEE_BPS / 10_000);
     }
 
-    function test_BuyWithEth_MatchesExactTokenBuy() public view {
+    function test_BuyExactIn_MatchesExactTokenBuy() public view {
         // 0.153125 ETH + 1% fee buys exactly 10k tokens from the start (see test_Buy_ChargesAreaUnderCurvePlusFee)
-        (uint256 filled,,) = pool.getBuyQuoteForEth(0.15465625 ether);
+        (uint256 filled,,) = pool.getBuyQuoteExactIn(0.15465625 ether);
         assertApproxEqRel(filled, 10_000 ether, 1e9); // within 1e-9 %
         assertLe(filled, 10_000 ether); // never more than the budget covers
     }
 
-    function test_BuyWithEth_PartialFillRefundsUnusedEth() public {
+    function test_BuyExactIn_PartialFillRefundsUnusedEth() public {
         _buy(alice, 70_000 ether);
 
         // bob throws 5 ETH at a curve that only has 10k tokens left
         (, uint256 cost, uint256 fee) = pool.getBuyQuote(10_000 ether);
         vm.prank(bob);
-        pool.buyWithEth{value: 5 ether}(1_000 ether);
+        pool.buyExactIn{value: 5 ether}(5 ether, 1_000 ether);
 
         assertEq(pool.balanceOf(bob), 10_000 ether);
         assertEq(bob.balance, 100 ether - cost - fee); // paid only for the 10k
         assertTrue(pool.graduated());
-        assertEq(pool.ethReserve(), THRESHOLD);
+        assertEq(pool.quoteReserve(), THRESHOLD);
     }
 
-    function test_RevertWhen_BuyWithEthPartialFillCostsMorePerToken() public {
+    function test_RevertWhen_BuyExactInPartialFillCostsMorePerToken() public {
         // bob quotes 1 ETH from the bottom of the curve and insists on that rate
-        (uint256 expected,,) = pool.getBuyQuoteForEth(1 ether);
+        (uint256 expected,,) = pool.getBuyQuoteExactIn(1 ether);
 
         _buy(alice, 70_000 ether);
 
         vm.prank(bob);
         vm.expectPartialRevert(BondingCurvePool.AveragePriceTooHigh.selector);
-        pool.buyWithEth{value: 1 ether}(expected);
+        pool.buyExactIn{value: 1 ether}(1 ether, expected);
     }
 
-    function test_RevertWhen_BuyWithEthTooSmallForOneUnit() public {
+    function test_RevertWhen_BuyExactInTooSmallForOneUnit() public {
         vm.prank(alice);
         vm.expectRevert(BondingCurvePool.ZeroAmount.selector);
-        pool.buyWithEth{value: 0}(0);
+        pool.buyExactIn{value: 0}(0, 0);
     }
 
-    function testFuzz_BuyWithEthNeverOverspends(uint256 pre, uint256 ethIn) public {
+    function testFuzz_BuyExactInNeverOverspends(uint256 pre, uint256 ethIn) public {
         pre = bound(pre, 0, 79_999 ether);
         ethIn = bound(ethIn, 1 gwei, 10 ether);
         if (pre > 0) _buy(alice, pre);
 
         uint256 before = bob.balance;
-        (uint256 filled, uint256 cost, uint256 fee) = pool.getBuyQuoteForEth(ethIn);
+        (uint256 filled, uint256 cost, uint256 fee) = pool.getBuyQuoteExactIn(ethIn);
         vm.assume(filled > 0);
         // a tiny bit more than `filled` would cost more than the budget, unless the curve runs out first
         bool curveRunsOut = filled == pool.curveTokensLeft();
         (, uint256 nextCost, uint256 nextFee) = pool.getBuyQuote(filled + 1e12);
 
         vm.prank(bob);
-        pool.buyWithEth{value: ethIn}(0);
+        pool.buyExactIn{value: ethIn}(ethIn, 0);
 
         assertLe(cost + fee, ethIn);
         assertEq(bob.balance, before - cost - fee);
@@ -291,7 +296,7 @@ contract BondingCurvePoolTest is Test {
 
     function test_SellingOutCurveRaisesExactlyThreshold() public {
         _buy(alice, 80_000 ether);
-        assertEq(pool.ethReserve(), THRESHOLD);
+        assertEq(pool.quoteReserve(), THRESHOLD);
         assertEq(pool.currentPrice(), 0.000095 ether);
         assertTrue(pool.graduated());
     }
@@ -335,7 +340,7 @@ contract BondingCurvePoolTest is Test {
 
         vm.prank(bob);
         vm.expectRevert(BondingCurvePool.AlreadyGraduated.selector);
-        pool.buy{value: 1 ether}(1 ether);
+        pool.buy{value: 1 ether}(1 ether, 1 ether);
 
         vm.prank(alice);
         vm.expectRevert(BondingCurvePool.AlreadyGraduated.selector);
@@ -375,7 +380,7 @@ contract BondingCurvePoolTest is Test {
         assertEq(p.balanceOf(pool.DEAD()), p.totalSupply() - 1000);
         assertEq(p.balanceOf(address(0)), 1000);
 
-        assertEq(pool.ethReserve(), 0);
+        assertEq(pool.quoteReserve(), 0);
         assertEq(pool.balanceOf(address(pool)), 0);
         // only the unclaimed creator fees remain
         assertEq(address(pool).balance, pool.creatorFees());
@@ -469,11 +474,127 @@ contract BondingCurvePoolTest is Test {
 
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, alice));
-        factory.withdrawFees(alice);
+        factory.withdrawFees(address(0), alice);
 
         vm.prank(admin);
-        factory.withdrawFees(admin);
+        factory.withdrawFees(address(0), admin);
         assertEq(admin.balance, owed);
+    }
+
+    // ------------------------------------------------------ buy & sell tax
+
+    function test_SeparateBuyAndSellTax() public {
+        PoolParams memory p = _params(SUPPLY, 100);
+        p.sellFeeBps = 300; // 1% on buys, 3% on sells
+        BondingCurvePool taxed = BondingCurvePool(factory.createPool(p, 0));
+        assertEq(taxed.buyFeeBps(), 100);
+        assertEq(taxed.sellFeeBps(), 300);
+
+        (, uint256 cost, uint256 buyFee) = taxed.getBuyQuote(10_000 ether);
+        assertEq(buyFee, cost / 100);
+        vm.prank(alice);
+        taxed.buy{value: cost + buyFee}(10_000 ether, cost + buyFee);
+
+        (uint256 refund, uint256 sellFee) = taxed.getSellQuote(10_000 ether);
+        assertEq(sellFee, refund * 3 / 100);
+        uint256 before = alice.balance;
+        vm.prank(alice);
+        taxed.sell(10_000 ether, 0);
+        assertEq(alice.balance, before + refund - sellFee);
+
+        // both taxes split 20% admin / 80% creator
+        uint256 adminCut = buyFee * 2_000 / 10_000 + sellFee * 2_000 / 10_000;
+        assertEq(address(factory).balance, adminCut);
+        assertEq(taxed.creatorFees(), buyFee + sellFee - adminCut);
+    }
+
+    function test_RevertWhen_SellTaxTooHigh() public {
+        PoolParams memory p = _params(SUPPLY, 100);
+        p.sellFeeBps = 1_001;
+        vm.expectRevert(BondingCurvePool.FeeTooHigh.selector);
+        factory.createPool(p, 0);
+    }
+
+    // ------------------------------------------------------------- first buy
+
+    function test_FirstBuy_IsTaxFreeAndFirst() public {
+        vm.deal(creator, 10 ether);
+        vm.prank(creator);
+        BondingCurvePool launched =
+            BondingCurvePool(factory.createPool{value: 0.5 ether}(_params(SUPPLY, FEE_BPS), 0.5 ether));
+
+        uint256 bought = launched.balanceOf(creator);
+        assertGt(bought, 0);
+        assertEq(launched.curveTokensLeft(), launched.curveSupply() - bought);
+        // tax-free: no fee anywhere, the creator paid only the curve cost and got the dust back
+        assertEq(address(factory).balance, 0);
+        assertEq(launched.creatorFees(), 0);
+        assertEq(creator.balance, 10 ether - launched.quoteReserve());
+        assertApproxEqAbs(launched.quoteReserve(), 0.5 ether, 1e6);
+
+        // the untouched setUp pool has the same curve: same cost, but a normal buyer would also pay tax
+        (, uint256 cost, uint256 fee) = pool.getBuyQuote(bought);
+        assertEq(cost, launched.quoteReserve());
+        assertGt(fee, 0);
+    }
+
+    function test_FirstBuy_LargerThanCurveGraduatesAndRefunds() public {
+        vm.deal(creator, 10 ether);
+        vm.prank(creator);
+        BondingCurvePool launched =
+            BondingCurvePool(factory.createPool{value: 10 ether}(_params(SUPPLY, FEE_BPS), 10 ether));
+
+        assertEq(launched.balanceOf(creator), 80_000 ether);
+        assertTrue(launched.graduated());
+        assertEq(launched.quoteReserve(), THRESHOLD);
+        assertEq(creator.balance, 10 ether - THRESHOLD);
+    }
+
+    function test_RevertWhen_FirstBuyValueMismatch() public {
+        vm.deal(creator, 1 ether);
+        vm.prank(creator);
+        vm.expectRevert(PoolFactory.InvalidMsgValue.selector);
+        factory.createPool{value: 1 ether}(_params(SUPPLY, FEE_BPS), 0.5 ether);
+    }
+
+    function test_RevertWhen_FirstBuyNotFromFactory() public {
+        vm.prank(alice);
+        vm.expectRevert(BondingCurvePool.OnlyFactory.selector);
+        pool.firstBuy{value: 1 ether}(1 ether);
+    }
+
+    function test_RevertWhen_FirstBuyAfterTrading() public {
+        _buy(alice, 1 ether);
+        vm.deal(address(factory), 1 ether);
+        vm.prank(address(factory));
+        vm.expectRevert(BondingCurvePool.NotFirstBuy.selector);
+        pool.firstBuy{value: 1 ether}(1 ether);
+    }
+
+    // ---------------------------------------------------------- quote tokens
+
+    function test_RevertWhen_QuoteTokenNotAllowed() public {
+        PoolParams memory p = _params(SUPPLY, FEE_BPS);
+        p.quoteToken = address(wbnb); // never approved by the admin
+        vm.expectRevert(abi.encodeWithSelector(PoolFactory.QuoteTokenNotAllowed.selector, address(wbnb)));
+        factory.createPool(p, 0);
+    }
+
+    function test_OnlyAdminSetsQuoteTokens() public {
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, alice));
+        factory.setQuoteToken(address(wbnb), 1);
+
+        vm.prank(admin);
+        factory.setQuoteToken(address(wbnb), 1);
+        assertEq(factory.startPriceOf(address(wbnb)), 1);
+    }
+
+    function test_RevertWhen_NativeBuyValueDoesNotMatchMaxIn() public {
+        (, uint256 cost, uint256 fee) = pool.getBuyQuote(1_000 ether);
+        vm.prank(alice);
+        vm.expectRevert(BondingCurvePool.InvalidMsgValue.selector);
+        pool.buy{value: cost + fee}(1_000 ether, cost + fee + 1);
     }
 
     // ------------------------------------------------------------ invariants
@@ -491,7 +612,7 @@ contract BondingCurvePoolTest is Test {
 
         uint256 circulating = pool.curveSupply() - pool.curveTokensLeft();
         (uint256 refundAll,) = pool.getSellQuote(circulating);
-        assertGe(pool.ethReserve(), refundAll);
-        assertEq(address(pool).balance, pool.ethReserve() + pool.creatorFees());
+        assertGe(pool.quoteReserve(), refundAll);
+        assertEq(address(pool).balance, pool.quoteReserve() + pool.creatorFees());
     }
 }

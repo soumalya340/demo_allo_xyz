@@ -1,7 +1,12 @@
 import { Module } from '@nestjs/common';
+import { APP_FILTER } from '@nestjs/core';
 import { createObserveModule } from '@nestjs/observe';
 import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
+import { ChainErrorFilter } from './chain/chain-error.filter.js';
+import { ChainService } from './chain/chain.service.js';
+import { TransactionsController } from './transactions/transactions.controller.js';
+import { TransactionsService } from './transactions/transactions.service.js';
 
 export const { ObserveModule, ObserveInstrument } = createObserveModule();
 
@@ -16,7 +21,12 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule();
       serviceId: 'nest-typescript-starter',
     }),
   ],
-  controllers: [AppController],
-  providers: [AppService],
+  controllers: [AppController, TransactionsController],
+  providers: [
+    AppService,
+    ChainService,
+    TransactionsService,
+    { provide: APP_FILTER, useClass: ChainErrorFilter },
+  ],
 })
 export class AppModule {}

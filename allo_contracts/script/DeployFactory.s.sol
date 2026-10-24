@@ -14,8 +14,13 @@ import {MockWBNB} from "../test/mocks/MockWBNB.sol";
 ///
 /// Env (read from .env): PRIVATE_KEY (deployer). Optional: ADMIN (factory owner, defaults to the
 /// deployer), PANCAKE_FACTORY / WBNB to override the addresses below or deploy to another chain.
+///
+/// Native BNB is allowed as a quote token from the start. To let coins pair with an ERC20, the admin
+/// approves it with a start price in that token's units per coin, e.g. USDT at 0.01:
+///   cast send <factory> "setQuoteToken(address,uint256)" <token> 10000000000000000 --private-key ...
 contract DeployFactoryScript is Script {
-    uint256 constant START_PRICE = 0.00001 ether;
+    uint256 constant START_PRICE = 0.00001 ether; // launch price for coins paired with native BNB
+    uint256 constant LAUNCH_FEE = 0.002 ether; // flat BNB fee per coin launch (admin can change it later)
 
     // PancakeSwap V2 factory + WBNB, checked on-chain (both factories expose INIT_CODE_PAIR_HASH)
     address constant BSC_PANCAKE_FACTORY = 0xcA143Ce32Fe78f1f7019d7d551a6402fC5350c73;
@@ -33,7 +38,7 @@ contract DeployFactoryScript is Script {
         uint256 gasStart = gasleft();
         vm.startBroadcast(deployerKey);
         (address pancakeFactory, address wbnb) = _dex(admin);
-        factory = new PoolFactory(admin, pancakeFactory, wbnb, START_PRICE);
+        factory = new PoolFactory(admin, pancakeFactory, wbnb, START_PRICE, LAUNCH_FEE);
         vm.stopBroadcast();
         uint256 gasUsed = gasStart - gasleft();
 

@@ -9,3 +9,9 @@ Note - Bonding curve maths - y = -mx + b formula ,
 1. 80% on Bonding Curve and 20% to Dex
 2. Starting price some 0.00001 ETH
 3. Partial fill rather absolute fill , suppose there is 99.99% someone coming with 1 eth , it should have partial fill
+
+
+here is 3  new features, 
+1. first-buy , 
+2. different buy and sell tax 
+3. pair can be anything , native eth or ERC20 coin                                                                                    
