@@ -7,11 +7,19 @@ export const poolFactoryAbi = [
       { name: 'admin', type: 'address', internalType: 'address' },
       { name: 'pancakeFactory_', type: 'address', internalType: 'address' },
       { name: 'wbnb_', type: 'address', internalType: 'address' },
-      { name: 'startPrice_', type: 'uint256', internalType: 'uint256' },
+      { name: 'nativeStartPrice', type: 'uint256', internalType: 'uint256' },
+      { name: 'launchFee_', type: 'uint256', internalType: 'uint256' },
     ],
     stateMutability: 'nonpayable',
   },
   { type: 'receive', stateMutability: 'payable' },
+  {
+    type: 'function',
+    name: 'NATIVE',
+    inputs: [],
+    outputs: [{ name: '', type: 'address', internalType: 'address' }],
+    stateMutability: 'view',
+  },
   {
     type: 'function',
     name: 'allPools',
@@ -33,7 +41,20 @@ export const poolFactoryAbi = [
           { name: 'imageUrl', type: 'string', internalType: 'string' },
           { name: 'website', type: 'string', internalType: 'string' },
           { name: 'twitter', type: 'string', internalType: 'string' },
-          { name: 'feeBps', type: 'uint256', internalType: 'uint256' },
+          { name: 'quoteToken', type: 'address', internalType: 'address' },
+          { name: 'buyFeeBps', type: 'uint256', internalType: 'uint256' },
+          { name: 'sellFeeBps', type: 'uint256', internalType: 'uint256' },
+          {
+            name: 'taxAllocation',
+            type: 'tuple',
+            internalType: 'struct TaxAllocation',
+            components: [
+              { name: 'creatorBps', type: 'uint256', internalType: 'uint256' },
+              { name: 'burnBps', type: 'uint256', internalType: 'uint256' },
+              { name: 'buybackBps', type: 'uint256', internalType: 'uint256' },
+              { name: 'holdersBps', type: 'uint256', internalType: 'uint256' },
+            ],
+          },
           { name: 'totalSupply', type: 'uint256', internalType: 'uint256' },
           {
             name: 'graduationThreshold',
@@ -42,15 +63,23 @@ export const poolFactoryAbi = [
           },
         ],
       },
+      { name: 'firstBuyAmount', type: 'uint256', internalType: 'uint256' },
     ],
     outputs: [{ name: 'pool', type: 'address', internalType: 'address' }],
-    stateMutability: 'nonpayable',
+    stateMutability: 'payable',
   },
   {
     type: 'function',
     name: 'implementation',
     inputs: [],
     outputs: [{ name: '', type: 'address', internalType: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    name: 'launchFee',
+    inputs: [],
+    outputs: [{ name: '', type: 'uint256', internalType: 'uint256' }],
     stateMutability: 'view',
   },
   {
@@ -90,8 +119,25 @@ export const poolFactoryAbi = [
   },
   {
     type: 'function',
-    name: 'startPrice',
-    inputs: [],
+    name: 'setLaunchFee',
+    inputs: [{ name: 'launchFee_', type: 'uint256', internalType: 'uint256' }],
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    name: 'setQuoteToken',
+    inputs: [
+      { name: 'token', type: 'address', internalType: 'address' },
+      { name: 'startPrice', type: 'uint256', internalType: 'uint256' },
+    ],
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    name: 'startPriceOf',
+    inputs: [{ name: '', type: 'address', internalType: 'address' }],
     outputs: [{ name: '', type: 'uint256', internalType: 'uint256' }],
     stateMutability: 'view',
   },
@@ -112,7 +158,10 @@ export const poolFactoryAbi = [
   {
     type: 'function',
     name: 'withdrawFees',
-    inputs: [{ name: 'to', type: 'address', internalType: 'address' }],
+    inputs: [
+      { name: 'token', type: 'address', internalType: 'address' },
+      { name: 'to', type: 'address', internalType: 'address' },
+    ],
     outputs: [],
     stateMutability: 'nonpayable',
   },
@@ -120,9 +169,28 @@ export const poolFactoryAbi = [
     type: 'event',
     name: 'FeesWithdrawn',
     inputs: [
+      {
+        name: 'token',
+        type: 'address',
+        indexed: true,
+        internalType: 'address',
+      },
       { name: 'to', type: 'address', indexed: true, internalType: 'address' },
       {
         name: 'amount',
+        type: 'uint256',
+        indexed: false,
+        internalType: 'uint256',
+      },
+    ],
+    anonymous: false,
+  },
+  {
+    type: 'event',
+    name: 'LaunchFeeSet',
+    inputs: [
+      {
+        name: 'launchFee',
         type: 'uint256',
         indexed: false,
         internalType: 'uint256',
@@ -160,6 +228,12 @@ export const poolFactoryAbi = [
         indexed: true,
         internalType: 'address',
       },
+      {
+        name: 'quoteToken',
+        type: 'address',
+        indexed: true,
+        internalType: 'address',
+      },
       { name: 'name', type: 'string', indexed: false, internalType: 'string' },
       {
         name: 'symbol',
@@ -167,8 +241,21 @@ export const poolFactoryAbi = [
         indexed: false,
         internalType: 'string',
       },
+    ],
+    anonymous: false,
+  },
+  {
+    type: 'event',
+    name: 'QuoteTokenSet',
+    inputs: [
       {
-        name: 'totalSupply',
+        name: 'token',
+        type: 'address',
+        indexed: true,
+        internalType: 'address',
+      },
+      {
+        name: 'startPrice',
         type: 'uint256',
         indexed: false,
         internalType: 'uint256',
@@ -185,6 +272,7 @@ export const poolFactoryAbi = [
       { name: 'needed', type: 'uint256', internalType: 'uint256' },
     ],
   },
+  { type: 'error', name: 'InvalidMsgValue', inputs: [] },
   {
     type: 'error',
     name: 'OwnableInvalidOwner',
@@ -194,6 +282,16 @@ export const poolFactoryAbi = [
     type: 'error',
     name: 'OwnableUnauthorizedAccount',
     inputs: [{ name: 'account', type: 'address', internalType: 'address' }],
+  },
+  {
+    type: 'error',
+    name: 'QuoteTokenNotAllowed',
+    inputs: [{ name: 'token', type: 'address', internalType: 'address' }],
+  },
+  {
+    type: 'error',
+    name: 'SafeERC20FailedOperation',
+    inputs: [{ name: 'token', type: 'address', internalType: 'address' }],
   },
   { type: 'error', name: 'TransferFailed', inputs: [] },
 ] as const;
@@ -237,6 +335,13 @@ export const bondingCurvePoolAbi = [
   },
   {
     type: 'function',
+    name: 'NATIVE',
+    inputs: [],
+    outputs: [{ name: '', type: 'address', internalType: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
     name: 'allowance',
     inputs: [
       { name: 'owner', type: 'address', internalType: 'address' },
@@ -264,15 +369,26 @@ export const bondingCurvePoolAbi = [
   },
   {
     type: 'function',
+    name: 'burnBucket',
+    inputs: [],
+    outputs: [{ name: '', type: 'uint256', internalType: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
     name: 'buy',
-    inputs: [{ name: 'amount', type: 'uint256', internalType: 'uint256' }],
+    inputs: [
+      { name: 'amount', type: 'uint256', internalType: 'uint256' },
+      { name: 'maxIn', type: 'uint256', internalType: 'uint256' },
+    ],
     outputs: [],
     stateMutability: 'payable',
   },
   {
     type: 'function',
-    name: 'buyWithEth',
+    name: 'buyExactIn',
     inputs: [
+      { name: 'amountIn', type: 'uint256', internalType: 'uint256' },
       { name: 'minTokensOut', type: 'uint256', internalType: 'uint256' },
     ],
     outputs: [],
@@ -280,9 +396,37 @@ export const bondingCurvePoolAbi = [
   },
   {
     type: 'function',
+    name: 'buyFeeBps',
+    inputs: [],
+    outputs: [{ name: '', type: 'uint256', internalType: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    name: 'buybackBucket',
+    inputs: [],
+    outputs: [{ name: '', type: 'uint256', internalType: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    name: 'buybackHeld',
+    inputs: [],
+    outputs: [{ name: '', type: 'uint256', internalType: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
     name: 'claimCreatorFees',
     inputs: [],
     outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    name: 'claimRewards',
+    inputs: [],
+    outputs: [{ name: 'amount', type: 'uint256', internalType: 'uint256' }],
     stateMutability: 'nonpayable',
   },
   {
@@ -343,13 +487,6 @@ export const bondingCurvePoolAbi = [
   },
   {
     type: 'function',
-    name: 'ethReserve',
-    inputs: [],
-    outputs: [{ name: '', type: 'uint256', internalType: 'uint256' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
     name: 'factory',
     inputs: [],
     outputs: [{ name: '', type: 'address', internalType: 'address' }],
@@ -357,10 +494,10 @@ export const bondingCurvePoolAbi = [
   },
   {
     type: 'function',
-    name: 'feeBps',
-    inputs: [],
-    outputs: [{ name: '', type: 'uint256', internalType: 'uint256' }],
-    stateMutability: 'view',
+    name: 'firstBuy',
+    inputs: [{ name: 'amountIn', type: 'uint256', internalType: 'uint256' }],
+    outputs: [],
+    stateMutability: 'payable',
   },
   {
     type: 'function',
@@ -375,8 +512,8 @@ export const bondingCurvePoolAbi = [
   },
   {
     type: 'function',
-    name: 'getBuyQuoteForEth',
-    inputs: [{ name: 'ethIn', type: 'uint256', internalType: 'uint256' }],
+    name: 'getBuyQuoteExactIn',
+    inputs: [{ name: 'amountIn', type: 'uint256', internalType: 'uint256' }],
     outputs: [
       { name: 'filled', type: 'uint256', internalType: 'uint256' },
       { name: 'cost', type: 'uint256', internalType: 'uint256' },
@@ -429,7 +566,20 @@ export const bondingCurvePoolAbi = [
           { name: 'imageUrl', type: 'string', internalType: 'string' },
           { name: 'website', type: 'string', internalType: 'string' },
           { name: 'twitter', type: 'string', internalType: 'string' },
-          { name: 'feeBps', type: 'uint256', internalType: 'uint256' },
+          { name: 'quoteToken', type: 'address', internalType: 'address' },
+          { name: 'buyFeeBps', type: 'uint256', internalType: 'uint256' },
+          { name: 'sellFeeBps', type: 'uint256', internalType: 'uint256' },
+          {
+            name: 'taxAllocation',
+            type: 'tuple',
+            internalType: 'struct TaxAllocation',
+            components: [
+              { name: 'creatorBps', type: 'uint256', internalType: 'uint256' },
+              { name: 'burnBps', type: 'uint256', internalType: 'uint256' },
+              { name: 'buybackBps', type: 'uint256', internalType: 'uint256' },
+              { name: 'holdersBps', type: 'uint256', internalType: 'uint256' },
+            ],
+          },
           { name: 'totalSupply', type: 'uint256', internalType: 'uint256' },
           {
             name: 'graduationThreshold',
@@ -467,6 +617,13 @@ export const bondingCurvePoolAbi = [
   },
   {
     type: 'function',
+    name: 'paidPerToken',
+    inputs: [{ name: '', type: 'address', internalType: 'address' }],
+    outputs: [{ name: '', type: 'uint256', internalType: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
     name: 'pair',
     inputs: [],
     outputs: [{ name: '', type: 'address', internalType: 'address' }],
@@ -474,13 +631,69 @@ export const bondingCurvePoolAbi = [
   },
   {
     type: 'function',
+    name: 'pendingRewards',
+    inputs: [{ name: 'holder', type: 'address', internalType: 'address' }],
+    outputs: [{ name: '', type: 'uint256', internalType: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    name: 'quoteReserve',
+    inputs: [],
+    outputs: [{ name: '', type: 'uint256', internalType: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    name: 'quoteToken',
+    inputs: [],
+    outputs: [{ name: '', type: 'address', internalType: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    name: 'rewardPerToken',
+    inputs: [],
+    outputs: [{ name: '', type: 'uint256', internalType: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    name: 'rewardsOwed',
+    inputs: [{ name: '', type: 'address', internalType: 'address' }],
+    outputs: [{ name: '', type: 'uint256', internalType: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    name: 'rewardsPending',
+    inputs: [],
+    outputs: [{ name: '', type: 'uint256', internalType: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    name: 'rewardsUnclaimed',
+    inputs: [],
+    outputs: [{ name: '', type: 'uint256', internalType: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
     name: 'sell',
     inputs: [
       { name: 'amount', type: 'uint256', internalType: 'uint256' },
-      { name: 'minEthOut', type: 'uint256', internalType: 'uint256' },
+      { name: 'minQuoteOut', type: 'uint256', internalType: 'uint256' },
     ],
     outputs: [],
     stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    name: 'sellFeeBps',
+    inputs: [],
+    outputs: [{ name: '', type: 'uint256', internalType: 'uint256' }],
+    stateMutability: 'view',
   },
   {
     type: 'function',
@@ -494,6 +707,18 @@ export const bondingCurvePoolAbi = [
     name: 'symbol',
     inputs: [],
     outputs: [{ name: '', type: 'string', internalType: 'string' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    name: 'taxAllocation',
+    inputs: [],
+    outputs: [
+      { name: 'creatorBps', type: 'uint256', internalType: 'uint256' },
+      { name: 'burnBps', type: 'uint256', internalType: 'uint256' },
+      { name: 'buybackBps', type: 'uint256', internalType: 'uint256' },
+      { name: 'holdersBps', type: 'uint256', internalType: 'uint256' },
+    ],
     stateMutability: 'view',
   },
   {
@@ -591,6 +816,44 @@ export const bondingCurvePoolAbi = [
   },
   {
     type: 'event',
+    name: 'BoughtBack',
+    inputs: [
+      {
+        name: 'coins',
+        type: 'uint256',
+        indexed: false,
+        internalType: 'uint256',
+      },
+      {
+        name: 'quoteSpent',
+        type: 'uint256',
+        indexed: false,
+        internalType: 'uint256',
+      },
+    ],
+    anonymous: false,
+  },
+  {
+    type: 'event',
+    name: 'Burned',
+    inputs: [
+      {
+        name: 'coins',
+        type: 'uint256',
+        indexed: false,
+        internalType: 'uint256',
+      },
+      {
+        name: 'quoteSpent',
+        type: 'uint256',
+        indexed: false,
+        internalType: 'uint256',
+      },
+    ],
+    anonymous: false,
+  },
+  {
+    type: 'event',
     name: 'CreatorFeesClaimed',
     inputs: [
       {
@@ -613,7 +876,7 @@ export const bondingCurvePoolAbi = [
     name: 'Graduated',
     inputs: [
       {
-        name: 'ethRaised',
+        name: 'quoteRaised',
         type: 'uint256',
         indexed: false,
         internalType: 'uint256',
@@ -646,13 +909,32 @@ export const bondingCurvePoolAbi = [
         internalType: 'uint256',
       },
       {
-        name: 'ethAmount',
+        name: 'quoteAmount',
         type: 'uint256',
         indexed: false,
         internalType: 'uint256',
       },
       {
         name: 'liquidity',
+        type: 'uint256',
+        indexed: false,
+        internalType: 'uint256',
+      },
+    ],
+    anonymous: false,
+  },
+  {
+    type: 'event',
+    name: 'RewardsClaimed',
+    inputs: [
+      {
+        name: 'holder',
+        type: 'address',
+        indexed: true,
+        internalType: 'address',
+      },
+      {
+        name: 'amount',
         type: 'uint256',
         indexed: false,
         internalType: 'uint256',
@@ -755,13 +1037,17 @@ export const bondingCurvePoolAbi = [
     name: 'InsufficientPayment',
     inputs: [
       { name: 'required', type: 'uint256', internalType: 'uint256' },
-      { name: 'sent', type: 'uint256', internalType: 'uint256' },
+      { name: 'maxIn', type: 'uint256', internalType: 'uint256' },
     ],
   },
   { type: 'error', name: 'InvalidCurve', inputs: [] },
   { type: 'error', name: 'InvalidInitialization', inputs: [] },
+  { type: 'error', name: 'InvalidMsgValue', inputs: [] },
+  { type: 'error', name: 'InvalidTaxAllocation', inputs: [] },
+  { type: 'error', name: 'NotFirstBuy', inputs: [] },
   { type: 'error', name: 'NotGraduated', inputs: [] },
   { type: 'error', name: 'NotInitializing', inputs: [] },
+  { type: 'error', name: 'OnlyFactory', inputs: [] },
   {
     type: 'error',
     name: 'PairMismatch',
@@ -773,10 +1059,15 @@ export const bondingCurvePoolAbi = [
   { type: 'error', name: 'ReentrancyGuardReentrantCall', inputs: [] },
   {
     type: 'error',
+    name: 'SafeERC20FailedOperation',
+    inputs: [{ name: 'token', type: 'address', internalType: 'address' }],
+  },
+  {
+    type: 'error',
     name: 'SlippageExceeded',
     inputs: [
-      { name: 'ethOut', type: 'uint256', internalType: 'uint256' },
-      { name: 'minEthOut', type: 'uint256', internalType: 'uint256' },
+      { name: 'quoteOut', type: 'uint256', internalType: 'uint256' },
+      { name: 'minQuoteOut', type: 'uint256', internalType: 'uint256' },
     ],
   },
   { type: 'error', name: 'TransferFailed', inputs: [] },

@@ -1,14 +1,16 @@
 import { BadRequestException } from '@nestjs/common';
 import {
-  formatEther,
+  formatUnits,
   getAddress,
   isAddress,
-  parseEther,
+  maxUint256,
+  parseUnits,
+  zeroAddress,
   type Address,
 } from 'viem';
 
-/// Query-string parsing. Every amount is a human decimal ("0.5" BNB, "1000" tokens);
-/// both BNB and the pool tokens have 18 decimals.
+/// Query-string parsing. Every amount is a human decimal ("0.5" BNB, "1000" coins). Coins have
+/// 18 decimals; quote amounts use the quote token's own decimals.
 
 export function requireString(name: string, v: unknown): string {
   if (typeof v !== 'string' || v.trim() === '') {
@@ -21,6 +23,8 @@ export function optionalString(v: unknown): string {
   return typeof v === 'string' ? v.trim() : '';
 }
 
+const isMissing = (v: unknown) => v === undefined || v === '';
+
 export function requireAddress(name: string, v: unknown): Address {
   const s = requireString(name, v);
   if (!isAddress(s, { strict: false })) {
@@ -30,24 +34,50 @@ export function requireAddress(name: string, v: unknown): Address {
 }
 
 export function optionalAddress(name: string, v: unknown): Address | undefined {
-  return v === undefined || v === '' ? undefined : requireAddress(name, v);
+  return isMissing(v) ? undefined : requireAddress(name, v);
 }
 
-/// "1.5" -> 1.5e18. Must be > 0.
-export function requireAmount(name: string, v: unknown): bigint {
+/// A quote token: omitted, "native", "bnb" or the zero address all mean native BNB.
+export function quoteTokenAddress(name: string, v: unknown): Address {
+  if (isMissing(v)) return zeroAddress;
+  const s = requireString(name, v).toLowerCase();
+  return s === 'native' || s === 'bnb' ? zeroAddress : requireAddress(name, v);
+}
+
+/// "1.5" -> 1.5 * 10^decimals. Must be > 0 unless `allowZero`.
+export function requireAmount(
+  name: string,
+  v: unknown,
+  decimals = 18,
+  { allowZero = false } = {},
+): bigint {
   const s = requireString(name, v);
-  if (!/^\d+(\.\d{1,18})?$/.test(s)) {
+  const fraction = decimals > 0 ? `(\\.\\d{1,${decimals}})?` : '';
+  if (!new RegExp(`^\\d+${fraction}$`).test(s)) {
     throw new BadRequestException(
-      `${name} must be a positive decimal number with at most 18 decimals`,
+      `${name} must be a non-negative decimal number with at most ${decimals} decimals`,
     );
   }
-  const wei = parseEther(s);
-  if (wei === 0n) throw new BadRequestException(`${name} must be > 0`);
-  return wei;
+  const raw = parseUnits(s, decimals);
+  if (raw === 0n && !allowZero) {
+    throw new BadRequestException(`${name} must be > 0`);
+  }
+  return raw;
 }
 
-export function optionalAmount(name: string, v: unknown): bigint | undefined {
-  return v === undefined || v === '' ? undefined : requireAmount(name, v);
+export function optionalAmount(
+  name: string,
+  v: unknown,
+  decimals = 18,
+): bigint | undefined {
+  return isMissing(v) ? undefined : requireAmount(name, v, decimals);
+}
+
+/// Like requireAmount, but also takes "max" (2^256 - 1) and 0, for ERC20 approvals.
+export function allowanceAmount(name: string, v: unknown): bigint {
+  return requireString(name, v).toLowerCase() === 'max'
+    ? maxUint256
+    : requireAmount(name, v, 18, { allowZero: true });
 }
 
 /// Basis points: integer in [0, max], `fallback` when omitted.
@@ -57,8 +87,7 @@ export function bps(
   max: number,
   fallback?: number,
 ): bigint {
-  if ((v === undefined || v === '') && fallback !== undefined)
-    return BigInt(fallback);
+  if (isMissing(v) && fallback !== undefined) return BigInt(fallback);
   const s = requireString(name, v);
   if (!/^\d+$/.test(s) || Number(s) > max) {
     throw new BadRequestException(
@@ -68,8 +97,8 @@ export function bps(
   return BigInt(s);
 }
 
-/// bigints don't survive JSON, so every amount goes out as both the raw 18-decimal integer
-/// and the human-readable decimal.
-export function amount(wei: bigint) {
-  return { raw: wei.toString(), formatted: formatEther(wei) };
+/// bigints don't survive JSON, so every amount goes out as both the raw integer and the
+/// human-readable decimal.
+export function amount(raw: bigint, decimals = 18) {
+  return { raw: raw.toString(), formatted: formatUnits(raw, decimals) };
 }
