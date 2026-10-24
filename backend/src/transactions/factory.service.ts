@@ -50,6 +50,7 @@ export class FactoryService {
       imageUrl: optionalString(q.imageUrl),
       website: optionalString(q.website),
       twitter: optionalString(q.twitter),
+      description: optionalString(q.description),
       quoteToken: quote.address,
       buyFeeBps: bps('buyFeeBps', q.buyFeeBps, MAX_FEE_BPS),
       sellFeeBps: bps('sellFeeBps', q.sellFeeBps, MAX_FEE_BPS),

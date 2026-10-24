@@ -57,6 +57,7 @@ contract TaxAllocationTest is Test {
             imageUrl: "",
             website: "",
             twitter: "",
+            description: "",
             quoteToken: address(0),
             buyFeeBps: 200,
             sellFeeBps: 100,

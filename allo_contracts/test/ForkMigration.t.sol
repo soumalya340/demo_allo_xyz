@@ -55,6 +55,7 @@ contract ForkMigrationTest is Test {
                     imageUrl: "",
                     website: "",
                     twitter: "",
+                    description: "",
                     quoteToken: quote,
                     buyFeeBps: 100,
                     sellFeeBps: 200,

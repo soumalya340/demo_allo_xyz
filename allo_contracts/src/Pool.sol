@@ -24,6 +24,7 @@ struct PoolParams {
     string imageUrl;
     string website;
     string twitter;
+    string description;
     address quoteToken; // what the coin trades against: address(0) = native BNB, else an admin-approved ERC20
     uint256 buyFeeBps; // tax on buys, e.g. 100 = 1%
     uint256 sellFeeBps; // tax on sells
@@ -65,6 +66,7 @@ contract BondingCurvePool is ERC20Upgradeable, ReentrancyGuard {
     string public imageUrl;
     string public website;
     string public twitter;
+    string public description;
     uint256 public buyFeeBps;
     uint256 public sellFeeBps;
     TaxAllocation public taxAllocation;
@@ -143,6 +145,7 @@ contract BondingCurvePool is ERC20Upgradeable, ReentrancyGuard {
         imageUrl = p.imageUrl;
         website = p.website;
         twitter = p.twitter;
+        description = p.description;
         buyFeeBps = p.buyFeeBps;
         sellFeeBps = p.sellFeeBps;
         taxAllocation = a;

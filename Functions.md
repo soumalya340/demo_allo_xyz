@@ -30,7 +30,7 @@ Every function in `src/`, grouped by how it's used.
 | Function | Who can call | What it does |
 |---|---|---|
 | `constructor()` | Factory, once | Locks the template contract so only clones can be initialized |
-| `initialize(params, creator, startPrice)` | Factory, once per clone | Sets up the coin (name, metadata, quote token, taxes, tax allocation, curve) and mints the full supply to the pool |
+| `initialize(params, creator, startPrice)` | Factory, once per clone | Sets up the coin (name, metadata links and description, quote token, taxes, tax allocation, curve) and mints the full supply to the pool |
 | `buy(amount, maxIn)` | Anyone | Buys an exact number of coins for at most `maxIn` quote including tax; partial fill at the end of the curve |
 | `buyExactIn(amountIn, minTokensOut)` | Anyone | Spends up to `amountIn` quote on as many coins as it buys, receiving at least `minTokensOut`; partial fill at the end of the curve |
 | `sell(amount, minQuoteOut)` | Any holder | Sells coins back to the curve for at least `minQuoteOut` after the sell tax |
@@ -120,6 +120,7 @@ Every function in `src/`, grouped by how it's used.
 | `creator()` | The coin's creator |
 | `quoteToken()` | What the coin trades against (`address(0)` = BNB); can never change |
 | `imageUrl()` / `website()` / `twitter()` | The coin's metadata links |
+| `description()` | The coin's description, written by the creator at launch |
 | `buyFeeBps()` / `sellFeeBps()` | Buy and sell tax in basis points (100 = 1%) |
 | `taxAllocation()` | The creator's split of the tax: creator / burn / buyback / holders, in basis points |
 | `graduationThreshold()` | Quote the curve raises when it sells out |

@@ -9,7 +9,7 @@ section 1), plus `/pool-info`. All endpoints are `GET`, with arguments in the qu
 
 Functions with no endpoint, because no user calls them directly:
 - `initialize` and `firstBuy`: only the factory calls these. For the first buy, use
-  `firstBuyAmount` on `/create-pool-transaction`.
+  `firstBuyAmount` on `/launch`.
 - the constructors and `receive`: these run on their own.
 
 ## Running
@@ -106,12 +106,12 @@ If you call without `from`, add it yourself before sending: `{ ...transaction, f
 
 ## PoolFactory endpoints
 
-### `GET /create-pool-transaction`: `createPool(params, firstBuyAmount)`
+### `GET /launch`: `createPool(params, firstBuyAmount)`
 
 | Param                              | Required | Notes                                                                 |
 | ---------------------------------- | -------- | --------------------------------------------------------------------- |
 | `name`, `symbol`                   | yes      |                                                                       |
-| `imageUrl`, `website`, `twitter`   | no       | default empty                                                         |
+| `imageUrl`, `website`, `twitter`, `description` | no | default empty                                          |
 | `quoteToken`                       | no       | default BNB; must be allowed by the admin                             |
 | `buyFeeBps`, `sellFeeBps`          | yes      | `0`–`1000` (100 = 1%)                                                 |
 | `creatorBps`, `burnBps`, `buybackBps`, `holdersBps` | no | how the tax left after the platform's 20% is split; each defaults to 0, and together they must add up to `10000` |
@@ -196,7 +196,7 @@ reject that.
 
 ### `GET /pool-info?pool=&holder=`
 
-Read-only, so there is no `transaction`. It returns the metadata, quote token, buy/sell tax, tax
+Read-only, so there is no `transaction`. It returns the metadata (links and `description`), quote token, buy/sell tax, tax
 allocation, supplies, curve progress, prices, `quoteReserve`, creator fees, burn/buyback buckets,
 `buybackHeld`, reward totals, `graduated` / `migrated` and `pair`. With `holder`, it also returns
 their coin balance and `pendingRewards`.

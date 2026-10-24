@@ -57,6 +57,7 @@ contract BondingCurvePoolTest is Test {
             imageUrl: "https://example.com/allo.png",
             website: "https://example.com",
             twitter: "https://x.com/allo",
+            description: "The first coin on Allo",
             quoteToken: address(0),
             buyFeeBps: feeBps,
             sellFeeBps: feeBps,
@@ -81,6 +82,7 @@ contract BondingCurvePoolTest is Test {
         assertEq(pool.imageUrl(), "https://example.com/allo.png");
         assertEq(pool.website(), "https://example.com");
         assertEq(pool.twitter(), "https://x.com/allo");
+        assertEq(pool.description(), "The first coin on Allo");
         assertEq(pool.quoteToken(), address(0));
         assertEq(pool.buyFeeBps(), FEE_BPS);
         assertEq(pool.sellFeeBps(), FEE_BPS);

@@ -341,7 +341,16 @@ export class PoolService {
     const { pool, quote } = await this.assertPool(address);
     const r = pool.read;
     const [
-      [name, symbol, totalSupply, creator, imageUrl, website, twitter],
+      [
+        name,
+        symbol,
+        totalSupply,
+        creator,
+        imageUrl,
+        website,
+        twitter,
+        description,
+      ],
       [buyFeeBps, sellFeeBps, [creatorBps, burnBps, buybackBps, holdersBps]],
       [graduationThreshold, startPrice, endPrice, currentPrice],
       [curveSupply, dexSupply, curveTokensLeft, quoteReserve],
@@ -357,6 +366,7 @@ export class PoolService {
         r.imageUrl(),
         r.website(),
         r.twitter(),
+        r.description(),
       ]),
       Promise.all([r.buyFeeBps(), r.sellFeeBps(), r.taxAllocation()]),
       Promise.all([
@@ -401,6 +411,7 @@ export class PoolService {
       imageUrl,
       website,
       twitter,
+      description,
       quoteToken: quote,
       buyFeeBps: Number(buyFeeBps),
       sellFeeBps: Number(sellFeeBps),

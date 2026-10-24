@@ -17,7 +17,7 @@ export class TransactionsController {
 
   // ------------------------------------------------------------ PoolFactory
 
-  @Get('create-pool-transaction')
+  @Get('launch')
   createPool(@Query() q: Q) {
     return this.factory.createPool(q);
   }

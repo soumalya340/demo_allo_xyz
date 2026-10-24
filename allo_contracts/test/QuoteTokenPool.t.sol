@@ -55,6 +55,7 @@ contract QuoteTokenPoolTest is Test {
             imageUrl: "",
             website: "",
             twitter: "",
+            description: "",
             quoteToken: quote,
             buyFeeBps: BUY_FEE_BPS,
             sellFeeBps: SELL_FEE_BPS,

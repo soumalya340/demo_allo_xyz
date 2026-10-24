@@ -9,7 +9,7 @@ Full details: `backend/API.md`.
 
 | # | Endpoint | Contract function | Who sends it | Args (* = required) |
 |---|---|---|---|---|
-| 1 | `/create-pool-transaction` | `createPool(params, firstBuyAmount)` | Anyone (becomes creator) | `name`*, `symbol`*, `buyFeeBps`*, `sellFeeBps`*, `totalSupply`*, `graduationThreshold`*, `imageUrl`, `website`, `twitter`, `quoteToken` (default BNB), `creatorBps`, `burnBps`, `buybackBps`, `holdersBps` (must add up to 10000), `firstBuyAmount`, `from` |
+| 1 | `/launch` | `createPool(params, firstBuyAmount)` | Anyone (becomes creator) | `name`*, `symbol`*, `buyFeeBps`*, `sellFeeBps`*, `totalSupply`*, `graduationThreshold`*, `imageUrl`, `website`, `twitter`, `description`, `quoteToken` (default BNB), `creatorBps`, `burnBps`, `buybackBps`, `holdersBps` (must add up to 10000), `firstBuyAmount`, `from` |
 | 2 | `/set-quote-token` | `setQuoteToken(token, startPrice)` | Admin | `token`*, `startPrice`* (0 = remove), `from` |
 | 3 | `/set-launch-fee` | `setLaunchFee(launchFee)` | Admin | `launchFee`* (BNB), `from` |
 | 4 | `/claim-admin-fees` | `withdrawFees(token, to)` | Admin | `token` (default BNB), `to` (default owner), `from` |
@@ -34,4 +34,4 @@ Full details: `backend/API.md`.
 
 | # | Endpoint | Returns | Args |
 |---|---|---|---|
-| 16 | `/pool-info` | All pool state: metadata, quote token, taxes, tax allocation, supplies, progress, prices, reserve, fees, buckets, rewards, graduated/migrated, pair | `pool`*, `holder` (adds balance + pending rewards) |
+| 16 | `/pool-info` | All pool state: metadata (links, description), quote token, taxes, tax allocation, supplies, progress, prices, reserve, fees, buckets, rewards, graduated/migrated, pair | `pool`*, `holder` (adds balance + pending rewards) |
