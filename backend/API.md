@@ -17,8 +17,16 @@ Functions with no endpoint, because no user calls them directly:
 ```bash
 npm install
 npm run build
-RPC_URL=... CHAIN_ID=97 FACTORY_ADDRESS=0x... npm run start:prod
+npm run start:prod        # or from the repo root: npm start / yarn dev
 ```
+
+Settings are read from the **repo-root `.env`** (`allo_xyz/.env`; template: `.env.example` next to
+it), loaded at startup by `src/env.ts`. A variable set in the shell wins over the file, e.g.
+`PORT=3005 npm run start:prod`. Without a `.env`, the defaults below apply.
+
+In Docker, pass the same file: `docker run --env-file .env -e PORT=3018 -p 3018:3018 …` (see the
+header of `dockerfile`). Docker's env-file format doesn't strip `# comments` written after a value,
+so keep comments on their own lines.
 
 | Env               | Default                                            |
 | ----------------- | -------------------------------------------------- |

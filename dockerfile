@@ -1,12 +1,12 @@
 # Backend API + indexer. Build from the repo root:
 #
 #   docker build -t allo-backend .
-#   docker run -p 3018:3018 -v allo-data:/app/data allo-backend
+#   docker run -d --name allo --env-file .env -e PORT=3018 -p 3018:3018 -v allo-data:/app/data allo-backend
 #
-# Settings (all optional, defaults = BSC testnet, factory in Address.md), e.g.:
-#   docker run -p 3018:3018 -v allo-data:/app/data \
-#     -e RPC_URL=https://bsc-testnet-rpc.publicnode.com -e FACTORY_ADDRESS=0x... allo-backend
-# The full list is in backend/API.md.
+# Settings come from the repo-root .env via --env-file (it is never copied into the image, see
+# .dockerignore); -e NAME=value overrides a single one. The root .env sets PORT=3000, so -e PORT=3018
+# keeps the app on the port published below. Without --env-file the defaults are BSC testnet, the
+# factory in Address.md and port 3018. The full list of settings is in backend/API.md.
 
 # ---- build: compile TypeScript with the dev dependencies (Nest CLI, tsc)
 # Node >= 22.5 is needed for the built-in node:sqlite.
@@ -31,5 +31,5 @@ COPY --from=build /app/dist ./dist
 RUN mkdir -p /app/data && chown node:node /app/data
 VOLUME /app/data
 USER node
-EXPOSE 3001
+EXPOSE 3018
 CMD ["node", "dist/main.js"]
