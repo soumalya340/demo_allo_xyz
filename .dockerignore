@@ -1,0 +1,10 @@
+# Only backend/ is copied into the image; keep the build context small and free of secrets.
+**/node_modules
+**/dist
+**/data
+**/*.tsbuildinfo
+**/.env
+**/.env.*
+.git
+allo_contracts
+scripts
