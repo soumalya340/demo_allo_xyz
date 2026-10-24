@@ -1,10 +1,16 @@
 # Transaction API
 
 The backend never signs anything. Each endpoint reads the chain, works out the contract arguments
-(price, slippage, fees), and returns an **unsigned transaction**. The caller signs and sends it
-with web3.js, a browser wallet, or a private key.
+(price, slippage, tax, launch fee, approvals), and returns **unsigned transactions**. The caller signs
+and sends them with web3.js, a browser wallet, or a private key.
 
-All endpoints are `GET`. Arguments go in the query string.
+There is one endpoint for every public function a user or the admin can call (`Functions.md`,
+section 1), plus `/pool-info`. All endpoints are `GET`, with arguments in the query string.
+
+Functions with no endpoint, because no user calls them directly:
+- `initialize` and `firstBuy`: only the factory calls these. For the first buy, use
+  `firstBuyAmount` on `/create-pool-transaction`.
+- the constructors and `receive`: these run on their own.
 
 ## Running
 
@@ -21,17 +27,24 @@ RPC_URL=... CHAIN_ID=97 FACTORY_ADDRESS=0x... npm run start:prod
 | `FACTORY_ADDRESS` | `0x9F47e969D6012f37916F8Abc21E6E7c9b8d026BF`       |
 | `PORT`            | `3000`                                             |
 
+> The default `FACTORY_ADDRESS` is the **old** factory, deployed before quote tokens, launch fees and
+> tax allocation were added, so these endpoints won't work against it. Deploy the current contracts
+> and set `FACTORY_ADDRESS`.
+
 CORS is open, so browser frontends can call the API directly.
 
 ## Conventions
 
-- **Amounts are human decimals**: `bnbAmount=0.5`, `tokenAmount=1000`. BNB and every pool token
-  have 18 decimals.
+- **Amounts are human decimals.** Coins (pool tokens) have 18 decimals. Quote amounts (prices,
+  `amountIn`, `graduationThreshold`, `firstBuyAmount`, fees) use the quote token's own decimals, so
+  `amountIn=100` on a USDC-quoted pool means 100 USDC.
+- **Quote token**: an omitted value, `native`, `bnb` or the zero address all mean native BNB.
+  Anything else is an ERC20 address the admin has allowed.
 - **`slippageBps`** (buy/sell): basis points, default `100` (1%), max `5000`.
 - **`from`** (optional on every transaction endpoint): the address that will send the transaction.
-  When it is given, the API dry-runs the call as that address and fills in `gas`, so anything that
-  would revert fails here with a readable error instead of in the wallet. Pass it whenever you
-  know the sender.
+  When it is given, the API checks balances and allowances, dry-runs the call as that address and
+  fills in `gas`. Anything that would revert fails here with a readable error instead of in the
+  wallet. Pass it whenever you know the sender.
 - Only pools created by the configured factory are accepted.
 
 ### Response
@@ -39,132 +52,156 @@ CORS is open, so browser frontends can call the API directly.
 ```jsonc
 {
   "chainId": 97,
+  "approvals": [ /* UnsignedTx, send these first, in order */ ],
   "transaction": {
     "from": "0x…",   // only if you passed `from`
     "to": "0x…",
     "data": "0x…",
     "value": "0x…",  // hex wei
-    "gas": "0x…"     // only if you passed `from`
+    "gas": "0x…"     // only when simulated
   },
+  "simulated": true, // the transaction was dry-run as `from`
   "quote": { … }     // what the transaction will do; differs per endpoint
 }
 ```
 
-Every amount in `quote` looks like `{ "raw": "1500000000000000000", "formatted": "1.5" }`.
+Every amount in `quote` looks like `{ "raw": "1500000", "formatted": "1.5" }`. A `quoteToken` object
+(`address`, `native`, `symbol`, `decimals`) says which units the quote amounts are in.
+
+**`approvals`** is only non-empty when an **ERC20 quote** has to be pulled from the sender: buying on
+an ERC20 pool (approve the pool), or a first buy on a new ERC20 coin (approve the factory). It
+approves the exact amount needed. With `from`, it is left out when the current allowance already
+covers it; without `from`, it is always included. While an approval is still unsent the main
+transaction can't be dry-run, so then `simulated` is `false` and there is no `gas`, and the wallet
+estimates gas when it sends.
 
 `transaction` uses hex quantities, so it works as-is with both web3.js and a raw EIP-1193 wallet
 (`window.ethereum.request({ method: 'eth_sendTransaction', params: [tx] })`).
 
 ### Errors
 
-| Status | When                                                                                                                                           |
-| ------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `400`  | Bad or missing arguments; the pool's state doesn't allow it; the dry run reverted (`error` is the Solidity error name, e.g. `SlippageExceeded`); `from` lacks BNB |
-| `502`  | The RPC node failed                                                                                                                            |
+| Status | When                                                                                                                                                            |
+| ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `400`  | Bad or missing arguments; the pool's state doesn't allow it; `from` lacks the balance, allowance or role; the dry run reverted (`error` is the Solidity error name, e.g. `SlippageExceeded`) |
+| `502`  | The RPC node failed                                                                                                                                             |
 
-## Sending a transaction
-
-### web3.js with a private key (scripts)
+## Sending
 
 ```js
 import { Web3 } from 'web3';
 
+// Script: sign with a key.        Frontend: const web3 = new Web3(window.ethereum);
 const web3 = new Web3(RPC_URL);
-const account = web3.eth.accounts.wallet.add(PRIVATE_KEY)[0];
+const from = web3.eth.accounts.wallet.add(PRIVATE_KEY)[0].address;
 
-const q = new URLSearchParams({ pool, bnbAmount: '0.1', from: account.address });
-const { transaction, quote } = await fetch(`${API}/buy?${q}`).then((r) => r.json());
+const q = new URLSearchParams({ pool, amountIn: '0.1', from });
+const { approvals, transaction, quote } = await fetch(`${API}/buy-exact-in?${q}`).then((r) => r.json());
 
-const receipt = await web3.eth.sendTransaction(transaction); // signed locally with the wallet key
-```
-
-### web3.js with a browser wallet (frontends)
-
-```js
-const web3 = new Web3(window.ethereum);
-const [from] = await web3.eth.requestAccounts();
-
-const q = new URLSearchParams({ pool, tokenAmount: '500', from });
-const { transaction, quote } = await fetch(`${API}/sell?${q}`).then((r) => r.json());
 // show `quote` to the user, then:
-const receipt = await web3.eth.sendTransaction(transaction); // wallet pops up to sign
+for (const tx of approvals) await web3.eth.sendTransaction(tx);
+const receipt = await web3.eth.sendTransaction(transaction);
 ```
 
 If you call without `from`, add it yourself before sending: `{ ...transaction, from }`.
 
-## Endpoints
+## PoolFactory endpoints
 
-### `GET /create-pool-transaction`
+### `GET /create-pool-transaction`: `createPool(params, firstBuyAmount)`
 
-Launches a coin through `PoolFactory.createPool`.
+| Param                              | Required | Notes                                                                 |
+| ---------------------------------- | -------- | --------------------------------------------------------------------- |
+| `name`, `symbol`                   | yes      |                                                                       |
+| `imageUrl`, `website`, `twitter`   | no       | default empty                                                         |
+| `quoteToken`                       | no       | default BNB; must be allowed by the admin                             |
+| `buyFeeBps`, `sellFeeBps`          | yes      | `0`–`1000` (100 = 1%)                                                 |
+| `creatorBps`, `burnBps`, `buybackBps`, `holdersBps` | no | how the tax left after the platform's 20% is split; each defaults to 0, and together they must add up to `10000` |
+| `totalSupply`                      | yes      | whole coins, e.g. `1000000`                                           |
+| `graduationThreshold`              | yes      | quote the curve raises when it sells out                              |
+| `firstBuyAmount`                   | no       | quote to spend on the creator's tax-free first buy, in the same transaction |
+| `from`                             | no       | becomes the creator                                                   |
 
-| Param                 | Required | Notes                                                    |
-| --------------------- | -------- | -------------------------------------------------------- |
-| `name`, `symbol`      | yes      |                                                          |
-| `imageUrl`, `website`, `twitter` | no | default empty                                     |
-| `feeBps`              | yes      | trading fee, `0`–`1000` (100 = 1%)                       |
-| `totalSupply`         | yes      | whole tokens, e.g. `1000000`                             |
-| `graduationThreshold` | yes      | BNB the curve raises when it sells out, e.g. `4.2`       |
-| `from`                | no       | becomes the pool's creator                               |
-
-`graduationThreshold` must exceed `startPrice × 80% of totalSupply`. Otherwise you get a 400 that
-names the minimum.
-
-`quote`: `curveSupply`, `dexSupply`, `startPrice`, `endPrice`, … The new pool's address is in the
+`value` is the launch fee (BNB) plus `firstBuyAmount` on a BNB coin. On an ERC20 coin with a first
+buy, `approvals` approves the factory for `firstBuyAmount`. The new pool's address is in the
 `PoolCreated` event of the receipt (`topics[1]`).
 
-### `GET /buy`
+### `GET /set-quote-token?token=&startPrice=`: `setQuoteToken`, admin only
 
-| Param                        | Required | Notes                                                    |
-| ---------------------------- | -------- | -------------------------------------------------------- |
-| `pool`                       | yes      |                                                          |
-| `bnbAmount` **or** `tokenAmount` | one of | see below                                              |
-| `slippageBps`, `from`        | no       |                                                          |
+Allows an ERC20 as a quote token at `startPrice` (in that token, per coin), changes its price, or
+removes it with `startPrice=0`. `token=native` reprices BNB. Existing pools are unaffected.
 
-- **`bnbAmount`**: spend exactly this much BNB (fee included) via `buyWithEth`. `quote.tokensOut`
-  is the expected output and `quote.minTokensOut` is what slippage still accepts.
-- **`tokenAmount`**: buy this many tokens via `buy`. `value` is the quoted cost plus slippage, and
-  the contract refunds whatever isn't used. Near the end of the curve fewer tokens may be left than
-  asked for; then `quote.partialFill` is `true` and the transaction buys what is left.
+### `GET /set-launch-fee?launchFee=`: `setLaunchFee`, admin only
 
-`quote.completesCurve` is `true` when this buy sells out the curve: the pool graduates and anyone
-can then call `/migrate`. Buying from a graduated pool returns a 400 that gives the PancakeSwap
-pair address.
+The flat BNB fee per launch (`0` allowed).
 
-### `GET /sell`
+### `GET /claim-admin-fees?token=&to=`: `withdrawFees(token, to)`, admin only
 
-| Param                 | Required | Notes          |
-| --------------------- | -------- | -------------- |
-| `pool`, `tokenAmount` | yes      |                |
-| `slippageBps`, `from` | no       |                |
+Withdraws the platform's collected fees in one token: BNB by default (launch fees plus the 20% share of
+BNB tax), or an ERC20 quote. `to` defaults to the owner. Returns a 400 if there is nothing to withdraw.
 
-No `approve` is needed, because the pool contract is the token. `quote.bnbOut` is the expected BNB
-after the fee and `quote.minBnbOut` is the slippage floor.
+### `GET /transfer-ownership?newOwner=`: admin only
 
-### `GET /pool-info?pool=0x…`
+### `GET /renounce-ownership?confirm=true`: admin only
 
-Read-only, so there is no `transaction`. It returns the name, symbol, creator, links, `feeBps`,
-supplies, `curveTokensLeft`/`curveTokensSold`, `progressPercent`, `bnbReserve`, `startPrice` /
-`currentPrice` / `endPrice` (wei per whole token), unclaimed `creatorFees`, `graduated`,
-`migrated` and the PancakeSwap `pair`.
+This is permanent: afterwards nobody can withdraw fees or change settings. It requires `confirm=true`.
 
-### `GET /claim-creator-fees?pool=0x…`
+## BondingCurvePool endpoints
 
-Builds `claimCreatorFees()`. Anyone may send it, but the BNB always goes to the pool's creator.
-Returns a 400 if there is nothing to claim.
+All take `pool`. Trading endpoints return a 400 once the pool has graduated, with the PancakeSwap
+pair address in the message.
 
-### `GET /claim-admin-fees`
+### `GET /buy?pool=&tokenAmount=`: `buy(amount, maxIn)`
 
-Builds `PoolFactory.withdrawFees(to)`, which sends the factory's accumulated 20% fee share. Only the
-factory owner can send it: passing any other address as `from` gets a 400. `to` defaults to the
-owner. Returns a 400 if the factory holds nothing.
+Buys an exact number of coins. `maxIn` is the quoted cost plus tax plus slippage. On a BNB pool that
+is the `value`, and the unused part is refunded. On an ERC20 pool the pool pulls exactly the cost
+(after the approval). If fewer coins are left than asked for, `quote.partialFill` is `true` and the
+transaction buys what's left.
 
-### `GET /migrate?pool=0x…`
+### `GET /buy-exact-in?pool=&amountIn=`: `buyExactIn(amountIn, minTokensOut)`
 
-Builds `migrate()` once the curve has sold out: it moves the raised BNB and the 20% DEX allocation
-into PancakeSwap, and the LP tokens are burned. Anyone may send it. Returns a 400 before graduation
-or after migration.
+Spends `amountIn` of quote (tax included) on as many coins as it buys. `quote.tokensOut` is the
+expected output and `minTokensOut` is the slippage floor. `quote.completesCurve` is `true` when the
+buy sells out the curve; anyone can then `/migrate`.
+
+### `GET /sell?pool=&tokenAmount=`: `sell(amount, minQuoteOut)`
+
+No approval is needed, because the pool is the coin. `quote.quoteOut` is the expected amount after
+the sell tax and `minQuoteOut` is the slippage floor.
+
+### `GET /migrate?pool=`: `migrate()`
+
+Anyone may send it, once graduated. It moves the raised quote and the 20% coin allocation into
+PancakeSwap, burns the LP tokens, and spends leftover burn/buyback tax on the new pair.
+
+### `GET /claim-creator-fees?pool=`: `claimCreatorFees()`
+
+Anyone may send it; the quote always goes to the creator.
+
+### `GET /claim-rewards?pool=&from=`: `claimRewards()`
+
+Pays the **sender** their share of the holder-rewards tax. Pass `from` to see the amount: you get a
+400 if they have nothing to claim.
+
+### `GET /transfer?pool=&to=&amount=`: ERC20 `transfer`
+
+### `GET /transfer-from?pool=&owner=&to=&amount=`: ERC20 `transferFrom`
+
+`from` is the approved spender who sends it, and `owner` is whose coins move.
+
+### `GET /approve?pool=&spender=&amount=`: ERC20 `approve`
+
+`amount` can be `max`, or `0` to revoke.
+
+Before migration, coins can't be sent to the PancakeSwap pair. `/transfer` and `/transfer-from`
+reject that.
+
+### `GET /pool-info?pool=&holder=`
+
+Read-only, so there is no `transaction`. It returns the metadata, quote token, buy/sell tax, tax
+allocation, supplies, curve progress, prices, `quoteReserve`, creator fees, burn/buyback buckets,
+`buybackHeld`, reward totals, `graduated` / `migrated` and `pair`. With `holder`, it also returns
+their coin balance and `pendingRewards`.
 
 ## ABIs
 
-`src/chain/abis.ts` is generated from `allo_contracts/out`. Regenerate it after changing the contracts.
+`src/chain/abis.ts` is generated from `allo_contracts/out` (`forge build`). Regenerate it after
+changing the contracts.

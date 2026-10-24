@@ -1,9 +1,37 @@
-
 # GET METHODS
-1. /create-pool-transaction : GET with args 
-2.  /buy :  for specific pool
-3. /sell : sell a speific coin
-4. /pool-info 
-5. /claim-creator-fees
-6. /claim-admin-fees
-7. /migrate it
+
+All endpoints are `GET`, with arguments in the query string. Every endpoint except `/pool-info` returns
+`{ chainId, approvals, transaction, simulated, quote }`: send each `approvals` entry first, then
+`transaction`. `from` (optional everywhere) is the sender; with it the call is dry-run and `gas` is filled in.
+Full details: `backend/API.md`.
+
+## PoolFactory
+
+| # | Endpoint | Contract function | Who sends it | Args (* = required) |
+|---|---|---|---|---|
+| 1 | `/create-pool-transaction` | `createPool(params, firstBuyAmount)` | Anyone (becomes creator) | `name`*, `symbol`*, `buyFeeBps`*, `sellFeeBps`*, `totalSupply`*, `graduationThreshold`*, `imageUrl`, `website`, `twitter`, `quoteToken` (default BNB), `creatorBps`, `burnBps`, `buybackBps`, `holdersBps` (must add up to 10000), `firstBuyAmount`, `from` |
+| 2 | `/set-quote-token` | `setQuoteToken(token, startPrice)` | Admin | `token`*, `startPrice`* (0 = remove), `from` |
+| 3 | `/set-launch-fee` | `setLaunchFee(launchFee)` | Admin | `launchFee`* (BNB), `from` |
+| 4 | `/claim-admin-fees` | `withdrawFees(token, to)` | Admin | `token` (default BNB), `to` (default owner), `from` |
+| 5 | `/transfer-ownership` | `transferOwnership(newOwner)` | Admin | `newOwner`*, `from` |
+| 6 | `/renounce-ownership` | `renounceOwnership()` | Admin | `confirm=true`*, `from` |
+
+## BondingCurvePool
+
+| # | Endpoint | Contract function | Who sends it | Args (* = required) |
+|---|---|---|---|---|
+| 7 | `/buy` | `buy(amount, maxIn)` | Anyone | `pool`*, `tokenAmount`*, `slippageBps` (default 100), `from` |
+| 8 | `/buy-exact-in` | `buyExactIn(amountIn, minTokensOut)` | Anyone | `pool`*, `amountIn`*, `slippageBps`, `from` |
+| 9 | `/sell` | `sell(amount, minQuoteOut)` | Any holder | `pool`*, `tokenAmount`*, `slippageBps`, `from` |
+| 10 | `/migrate` | `migrate()` | Anyone, after graduation | `pool`*, `from` |
+| 11 | `/claim-creator-fees` | `claimCreatorFees()` | Anyone (pays the creator) | `pool`*, `from` |
+| 12 | `/claim-rewards` | `claimRewards()` | Any holder | `pool`*, `from` |
+| 13 | `/transfer` | `transfer(to, amount)` | Any holder | `pool`*, `to`*, `amount`*, `from` |
+| 14 | `/transfer-from` | `transferFrom(owner, to, amount)` | Approved spender | `pool`*, `owner`*, `to`*, `amount`*, `from` |
+| 15 | `/approve` | `approve(spender, amount)` | Any holder | `pool`*, `spender`*, `amount`* (`max` or `0` allowed), `from` |
+
+## Read-only
+
+| # | Endpoint | Returns | Args |
+|---|---|---|---|
+| 16 | `/pool-info` | All pool state: metadata, quote token, taxes, tax allocation, supplies, progress, prices, reserve, fees, buckets, rewards, graduated/migrated, pair | `pool`*, `holder` (adds balance + pending rewards) |

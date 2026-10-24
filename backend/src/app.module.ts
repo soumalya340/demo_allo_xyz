@@ -6,7 +6,8 @@ import { AppService } from './app.service.js';
 import { ChainErrorFilter } from './chain/chain-error.filter.js';
 import { ChainService } from './chain/chain.service.js';
 import { TransactionsController } from './transactions/transactions.controller.js';
-import { TransactionsService } from './transactions/transactions.service.js';
+import { FactoryService } from './transactions/factory.service.js';
+import { PoolService } from './transactions/pool.service.js';
 
 export const { ObserveModule, ObserveInstrument } = createObserveModule();
 
@@ -25,7 +26,8 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule();
   providers: [
     AppService,
     ChainService,
-    TransactionsService,
+    FactoryService,
+    PoolService,
     { provide: APP_FILTER, useClass: ChainErrorFilter },
   ],
 })

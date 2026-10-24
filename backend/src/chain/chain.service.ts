@@ -11,6 +11,7 @@ import {
   zeroAddress,
   type Address,
   type Chain,
+  type GetContractReturnType,
   type Hex,
   type PublicClient,
   type Transport,
@@ -42,6 +43,16 @@ export interface TxResponse {
   quote: Record<string, unknown>;
 }
 
+type Client = PublicClient<Transport, Chain>;
+export type FactoryContract = GetContractReturnType<
+  typeof poolFactoryAbi,
+  Client
+>;
+export type PoolContract = GetContractReturnType<
+  typeof bondingCurvePoolAbi,
+  Client
+>;
+
 /// What a coin trades against. Native BNB is the zero address.
 export interface QuoteToken {
   address: Address;
@@ -53,7 +64,7 @@ export interface QuoteToken {
 @Injectable()
 export class ChainService {
   readonly chain: Chain;
-  readonly client: PublicClient<Transport, Chain>;
+  readonly client: Client;
   readonly factoryAddress: Address;
 
   constructor() {
@@ -75,7 +86,7 @@ export class ChainService {
       DEFAULT_FACTORY) as Address;
   }
 
-  factory() {
+  factory(): FactoryContract {
     return getContract({
       address: this.factoryAddress,
       abi: poolFactoryAbi,
@@ -83,7 +94,7 @@ export class ChainService {
     });
   }
 
-  pool(address: Address) {
+  pool(address: Address): PoolContract {
     return getContract({
       address,
       abi: bondingCurvePoolAbi,
@@ -144,6 +155,11 @@ export class ChainService {
   /// Owner-only factory calls: reject a `from` that isn't the owner before the wallet does.
   async assertFactoryOwner(from: Address | undefined): Promise<Address> {
     const owner = await this.factory().read.owner();
+    if (isAddressEqual(owner, zeroAddress)) {
+      throw new BadRequestException(
+        'the factory has no owner (ownership was renounced)',
+      );
+    }
     if (from && !isAddressEqual(from, owner)) {
       throw new BadRequestException(
         `only the factory owner ${owner} can send this`,
