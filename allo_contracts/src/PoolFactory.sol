@@ -3,53 +3,38 @@ pragma solidity ^0.8.20;
 
 import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {BondingCurvePool, PoolParams} from "./Pool.sol";
 import {IPancakeFactory} from "./interfaces/IPancake.sol";
 
-/// @notice Launches coins. Each pool is an ERC-1167 minimal proxy pointing at one BondingCurvePool implementation.
-/// The owner is the admin: it decides which quote tokens coins may trade against, and the platform earns
-/// a flat launch fee (in BNB) on every new coin plus 20% of every trading tax from every pool.
+/// @notice Launches native BNB pools and collects launch fees plus 20% of trading fees.
 contract PoolFactory is Ownable {
-    using SafeERC20 for IERC20;
-
-    address public constant NATIVE = address(0);
-
     address public immutable implementation;
-    address public immutable pancakeFactory; // PancakeSwap V2 factory pools migrate into
+    address public immutable pancakeFactory;
     address public immutable wbnb;
-    bytes32 public immutable pairInitCodeHash; // read from pancakeFactory, used to predict pair addresses
-
-    /// Launch price for each allowed quote token, in its units per whole coin; 0 = not allowed.
-    /// NATIVE (address(0)) is native BNB.
-    mapping(address => uint256) public startPriceOf;
-
-    uint256 public launchFee; // flat BNB fee paid by the creator on createPool
-
+    bytes32 public immutable pairInitCodeHash;
+    uint256 public nativeStartPrice;
+    uint256 public launchFee;
     address[] public allPools;
 
     event PoolCreated(
         address indexed pool, address indexed creator, address indexed quoteToken, string name, string symbol
     );
-    event QuoteTokenSet(address indexed token, uint256 startPrice);
+    event StartPriceSet(uint256 startPrice);
     event LaunchFeeSet(uint256 launchFee);
-    event FeesWithdrawn(address indexed token, address indexed to, uint256 amount);
+    event FeesWithdrawn(address indexed to, uint256 amount);
 
-    error QuoteTokenNotAllowed(address token);
+    error InvalidStartPrice();
     error InvalidMsgValue();
     error TransferFailed();
 
-    /// @param nativeStartPrice launch price for coins paired with native BNB, wei per coin (e.g. 0.00001 ether)
-    /// @param launchFee_ flat BNB fee per launch (e.g. 0.002 ether)
-    constructor(address admin, address pancakeFactory_, address wbnb_, uint256 nativeStartPrice, uint256 launchFee_)
+    constructor(address admin, address pancakeFactory_, address wbnb_, uint256 nativeStartPrice_, uint256 launchFee_)
         Ownable(admin)
     {
         implementation = address(new BondingCurvePool());
         pancakeFactory = pancakeFactory_;
         wbnb = wbnb_;
         pairInitCodeHash = IPancakeFactory(pancakeFactory_).INIT_CODE_PAIR_HASH();
-        _setQuoteToken(NATIVE, nativeStartPrice);
+        _setStartPrice(nativeStartPrice_);
         launchFee = launchFee_;
         emit LaunchFeeSet(launchFee_);
     }
@@ -59,57 +44,36 @@ contract PoolFactory is Ownable {
         emit LaunchFeeSet(launchFee_);
     }
 
-    /// @notice Allow `token` as a quote token with this launch price, change its price, or remove it (0).
-    /// Only plain ERC20s belong here: fee-on-transfer or rebasing tokens break a pool's accounting.
-    /// Existing pools keep the price they launched with.
-    function setQuoteToken(address token, uint256 startPrice) external onlyOwner {
-        _setQuoteToken(token, startPrice);
+    /// @notice Set the launch price in wei per whole token for future pools.
+    function setStartPrice(uint256 startPrice) external onlyOwner {
+        _setStartPrice(startPrice);
     }
 
-    function _setQuoteToken(address token, uint256 startPrice) private {
-        startPriceOf[token] = startPrice;
-        emit QuoteTokenSet(token, startPrice);
+    function _setStartPrice(uint256 startPrice) private {
+        if (startPrice == 0) revert InvalidStartPrice();
+        nativeStartPrice = startPrice;
+        emit StartPriceSet(startPrice);
     }
 
-    /// @notice Launch a coin. The creator picks the quote token (from the allowed list), buy and sell tax,
-    /// tax allocation, supply and graduation threshold in `params`.
-    /// msg.value = launchFee, plus firstBuyAmount when the coin is paired with native BNB.
-    /// @param firstBuyAmount optional tax-free first buy for the creator, in quote, made in this same
-    /// transaction. ERC20 quote: approve this factory for it first.
-    function createPool(PoolParams calldata params, uint256 firstBuyAmount) external payable returns (address pool) {
-        uint256 startPrice = startPriceOf[params.quoteToken];
-        if (startPrice == 0) revert QuoteTokenNotAllowed(params.quoteToken);
-        bool native = params.quoteToken == NATIVE;
-        uint256 firstBuyValue = native ? firstBuyAmount : 0;
-        if (msg.value != launchFee + firstBuyValue) revert InvalidMsgValue();
-
+    /// @notice Launch a coin with native BNB as its quote token. Send exactly the launch fee.
+    function createPool(PoolParams calldata params) external payable returns (address pool) {
+        if (msg.value != launchFee) revert InvalidMsgValue();
         pool = Clones.clone(implementation);
-        BondingCurvePool(pool).initialize(params, msg.sender, startPrice);
+        BondingCurvePool(pool).initialize(params, msg.sender, nativeStartPrice);
         allPools.push(pool);
-        emit PoolCreated(pool, msg.sender, params.quoteToken, params.name, params.symbol);
-
-        if (firstBuyAmount > 0) {
-            if (!native) IERC20(params.quoteToken).safeTransferFrom(msg.sender, pool, firstBuyAmount);
-            BondingCurvePool(pool).firstBuy{value: firstBuyValue}(firstBuyAmount);
-        }
+        emit PoolCreated(pool, msg.sender, address(0), params.name, params.symbol);
     }
 
     function poolCount() external view returns (uint256) {
         return allPools.length;
     }
 
-    /// @notice Withdraw the admin's collected fees in `token` (NATIVE for BNB).
-    function withdrawFees(address token, address to) external onlyOwner {
-        uint256 amount = token == NATIVE ? address(this).balance : IERC20(token).balanceOf(address(this));
-        emit FeesWithdrawn(token, to, amount);
-        if (token == NATIVE) {
-            (bool ok,) = to.call{value: amount}("");
-            if (!ok) revert TransferFailed();
-        } else {
-            IERC20(token).safeTransfer(to, amount);
-        }
+    function withdrawFees(address to) external onlyOwner {
+        uint256 amount = address(this).balance;
+        emit FeesWithdrawn(to, amount);
+        (bool ok,) = to.call{value: amount}("");
+        if (!ok) revert TransferFailed();
     }
 
-    /// The platform's share of BNB tax arrives here from pools (launch fees are kept from createPool).
     receive() external payable {}
 }
