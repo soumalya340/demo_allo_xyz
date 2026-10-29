@@ -15,9 +15,7 @@ import {MockWBNB} from "../test/mocks/MockWBNB.sol";
 /// Env (read from .env): PRIVATE_KEY (deployer). Optional: ADMIN (factory owner, defaults to the
 /// deployer), PANCAKE_FACTORY / WBNB to override the addresses below or deploy to another chain.
 ///
-/// Native BNB is allowed as a quote token from the start. To let coins pair with an ERC20, the admin
-/// approves it with a start price in that token's units per coin, e.g. USDT at 0.01:
-///   cast send <factory> "setQuoteToken(address,uint256)" <token> 10000000000000000 --private-key ...
+/// Pools use native BNB exclusively, wrapping it into WBNB on migration.
 contract DeployFactoryScript is Script {
     uint256 constant START_PRICE = 0.00001 ether; // launch price for coins paired with native BNB
     uint256 constant LAUNCH_FEE = 0.002 ether; // flat BNB fee per coin launch (admin can change it later)
